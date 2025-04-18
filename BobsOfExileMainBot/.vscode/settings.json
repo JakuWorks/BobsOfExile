@@ -1,0 +1,25 @@
+{
+    "cSpell.words": [
+        "cleanupable",
+        "coro",
+        "cpus",
+        "dunder",
+        "freqs",
+        "lcmd",
+        "ldbg",
+        "levent",
+        "linfo",
+        "lwarn",
+        "Messageable",
+        "mkdirs",
+        "NOTIF",
+        "perc",
+        "percore",
+        "percpu",
+        "popleft",
+        "procs",
+        "scpufreq",
+        "univmeminfo"
+    ],
+    "mypy.dmypyExecutable": "${workspaceFolder}/venv/bin/dmypy",
+}

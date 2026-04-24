@@ -255,10 +255,10 @@ async def main_server() -> None:
     )
     shutdown_responder.start(networking_handler=networking_handler)
 
-    # power_device_status_responder: PowerDeviceStatusResponder = (
-    #     PowerDeviceStatusResponder(client_power_controller=client_power_controller)
-    # )
-    # power_device_status_responder.start(networking_handler=networking_handler)
+    power_device_status_responder: PowerDeviceStatusResponder = (
+        PowerDeviceStatusResponder(client_power_controller=client_power_controller)
+    )
+    power_device_status_responder.start(networking_handler=networking_handler)
 
     ranks_registry: RanksRegistry = RanksRegistry()
     ranks_registry.add_trusted(trusted_from_environment())

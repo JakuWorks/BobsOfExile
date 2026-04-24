@@ -1,0 +1,12 @@
+# EXAMPLE USAGE:
+# Rename and move to (for user mode function) /etc/systemd/system/BobsOfExile.service
+# systemctl enable --user BobsOfExile
+
+[Unit]
+Description=Bobs of Exile Discord bot
+
+[Service]
+ExecStart=/bobs/of/exile/path/RUN-PORTABLE.sh
+
+[Install]
+WantedBy=multi-user.target

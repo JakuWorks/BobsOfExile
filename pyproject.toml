@@ -1,0 +1,41 @@
+[project]
+name = "bobsofexile"
+description = "TODO"
+version = "3.1.0"
+requires-python = ">=3.11.15"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies=[
+    'discord.py>=2.7.0,<3',
+    'asyncclick>=8.3.0.7,<9',
+    'dotenv>=0.9.9,<1',
+    'pyzmq>=27.1.0,<28',
+    'tinytuya>=1.17.6,<2',
+    'pycryptodome>=3.23.0,<4',
+    'mcstatus>=13.0.1,<14'
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.urls]
+Homepage = "https://TODO.TODO"
+
+[project.scripts]
+
+[tool.pyright]
+include = ["src"]
+strict = ['**']
+exclude = [
+    "**/.*",
+    ".venv",
+    "**/node_modules",
+    "**/__pycache__",
+    "**/bin",
+    "**/bin-portable"
+]

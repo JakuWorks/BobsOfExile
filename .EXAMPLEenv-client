@@ -1,0 +1,25 @@
+# Fields not required by the selected mode will be ignored, their values will not be used 
+mode='client' # both
+token='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' # both
+bot_prefix='' # both
+bot_status='' # both
+rank_trusted_users='comma,separated,user,ids,with,no,spaces' # both
+rank_owner_users='comma,separated,user,ids,with,no,spaces' # both
+minecraft_server_executable='/somepath.sh' # client
+minecraft_server_stdout_buffer_size_bytes='1048576' # client
+minecraft_empty_check_interval_s='300' # client
+minecraft_empty_prolonged_minimum_spree=2 # client
+minecraft_host='127.0.0.1' # client
+minecraft_port='25565' # client
+networking_client_connect_url='tcp://someip' # client
+networking_client_bind_url='tcp://*:someport' # client
+networking_server_connect_url='tcp://someip' # server
+networking_server_bind_url='tcp://*:someport' # server
+networking_curve_client_publickey='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' # both
+networking_curve_client_secretkey='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' # client
+networking_curve_server_publickey='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' # both
+networking_curve_server_secretkey='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' # server
+tuya_access_id='aaaaaaaaaaaaaaaaaaaa' # server
+tuya_access_secret='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' # server
+tuya_region='aa' # server
+tuya_device_id='aaaaaaaaaaaaaaaaaaaaaa' # server

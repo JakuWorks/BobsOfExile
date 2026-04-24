@@ -1,0 +1,10 @@
+libtinfow.so.6
+libz.so.1
+libtcl8.6.so
+libsqlite3.so.0
+libtk8.6.so
+libncursesw.so.6
+libbz2.so.1
+libpanelw.so.6
+tk8.6
+tcl8.6

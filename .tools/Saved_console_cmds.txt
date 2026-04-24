@@ -1,0 +1,2 @@
+dotenv_path='./.env-client-local' ./.venv/bin/python3 -m src.bobsofexile.main
+dotenv_path='./.env-server-local' ./.venv/bin/python3 -m src.bobsofexile.main

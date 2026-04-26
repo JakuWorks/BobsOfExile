@@ -678,7 +678,6 @@ class OneTimeLazySocket(IOneTimeLazySocket):
             | zmq.EVENT_CONNECTED
             | zmq.EVENT_LISTENING
             | zmq.EVENT_HANDSHAKE_SUCCEEDED
-            | zmq.EVENT_CLOSED
         )
         sock_monitor = sock.get_monitor_socket(events=events)
         return sock_monitor
@@ -884,8 +883,9 @@ class OneTimeLazySocket(IOneTimeLazySocket):
                 case zmq.EVENT_BIND_FAILED:
                     logging.info("SOME event was: BIND FAILED")
                     self.set_disconnected()
-                case zmq.EVENT_CLOSED:
-                    logging.info("SOME event was: CLOSED")
+                # Currently unused
+                # case zmq.EVENT_CLOSED:
+                #     logging.info("SOME event was: CLOSED")
                 case _:
                     logging.error(
                         f"Unexpected zmq event type received by one-time lazy socket monitor (and therefore ignored) {event_num=}"

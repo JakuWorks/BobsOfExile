@@ -170,7 +170,7 @@ async def call_cmd_poweroff_raw(call_context: CallContext) -> None:
     msg_approx_poweroff_timestamp: str = (
         f"The client (local) is shutting down. Its power supply will be cut <t:{approximate_poweroff_timestamp}:R>."
         f"\nIt will be safe to power on the local bot <t:{safe_poweron_timestamp}:R>."
-        "\n-# bringing back the power supply before this time will break the system in a way that will prevent it from powering on without special intervention"
+        "\n-# bringing back the power supply before this time will break the power state"
     )
     await respond(call_context, content=msg_approx_poweroff_timestamp)
 

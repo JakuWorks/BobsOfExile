@@ -40,4 +40,6 @@ async def call_cmd_testpermissions_raw(call_context: CallContext) -> None:
 async def call_cmd_testpermissions(ctx: click.Context, /) -> None: ...
 
 
-call_cmd_testpermissions = simple_wrap_command_call(call_cmd_testpermissions_raw, respect_lock=False)
+call_cmd_testpermissions = simple_wrap_command_call(
+    call_cmd_testpermissions_raw, respect_lock=False
+)

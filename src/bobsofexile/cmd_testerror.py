@@ -1,5 +1,4 @@
 import logging
-from typing import assert_never
 
 import asyncclick as click
 
@@ -42,7 +41,7 @@ async def call_cmd_testerror_raw(call_context: CallContext) -> None:
 
     raise SomeTestingError("Error test")
 
-    assert_never()
+    assert False, "Unreachable code"
     await respond(call_context, "Msg after error")
     logging.info("Error test after")
 
@@ -50,4 +49,6 @@ async def call_cmd_testerror_raw(call_context: CallContext) -> None:
 async def call_cmd_testerror(ctx: click.Context, /) -> None: ...
 
 
-call_cmd_testerror = simple_wrap_command_call(call_cmd_testerror_raw, respect_lock=False)
+call_cmd_testerror = simple_wrap_command_call(
+    call_cmd_testerror_raw, respect_lock=False
+)

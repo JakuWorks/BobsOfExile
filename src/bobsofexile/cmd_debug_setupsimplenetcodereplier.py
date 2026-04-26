@@ -12,6 +12,7 @@ from .cmd_convenience import (
 )
 from .networking import NetworkingMessage, RequestReplyContext, RequestReplyContextYoung
 from .discord_streaming_message import DiscordStreamingMessage
+from .main_convenience import get_future_time
 
 NAME: str = "debug_setupsimplenetcodereplier"
 
@@ -55,7 +56,7 @@ async def call_cmd_debug_setupsimplenetcodereplier_raw(
     async def reply_hook(request_reply_context: RequestReplyContext) -> None:
         received_msg: NetworkingMessage = request_reply_context.youngest.msg
         reply_msg: NetworkingMessage = NetworkingMessage(
-            code=replycode, id=received_msg.id, is_reply=True
+            code=replycode, id=received_msg.id, is_reply=True, expiration=get_future_time(timeout)
         )
 
         await streaming_message.add_line(

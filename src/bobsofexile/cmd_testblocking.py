@@ -47,4 +47,6 @@ async def call_cmd_testblocking_raw(call_context: CallContext) -> None:
 async def call_cmd_testblocking(ctx: click.Context, /) -> None: ...
 
 
-call_cmd_testblocking = simple_wrap_command_call(call_cmd_testblocking_raw, respect_lock=True)
+call_cmd_testblocking = simple_wrap_command_call(
+    call_cmd_testblocking_raw, respect_lock=True
+)

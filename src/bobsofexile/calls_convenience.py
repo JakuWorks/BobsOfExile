@@ -59,7 +59,8 @@ async def simple_error_response(call_context: CallContext, error: Exception) -> 
 
 
 def simple_wrap_command_call(
-    cmd: Callable[Concatenate[CallContext, P], Coroutine[Any, Any, None]], respect_lock: bool
+    cmd: Callable[Concatenate[CallContext, P], Coroutine[Any, Any, None]],
+    respect_lock: bool,
 ) -> "Callable[Concatenate[click.Context, P], CoroutineType[Any, Any, None]]":
     # CoroutineType is not subscriptable ??? The quotes avoid this
     raw_name: str = cmd.__name__
@@ -88,7 +89,8 @@ def simple_wrap_command_call(
                 exc_info=e,
             )
             await simple_error_response(call_context, e)
-            await simple_handle_lock_release(call_context)
+            if respect_lock:
+                await simple_handle_lock_release(call_context)
             raise
 
         logging.info(f"Releasing command lock {wrapped_name}")

@@ -125,4 +125,6 @@ async def call_cmd_serverstart_raw(call_context: CallContext) -> None:
 async def call_cmd_serverstart(ctx: click.Context, /) -> None: ...
 
 
-call_cmd_serverstart = simple_wrap_command_call(call_cmd_serverstart_raw, respect_lock=True)
+call_cmd_serverstart = simple_wrap_command_call(
+    call_cmd_serverstart_raw, respect_lock=True
+)

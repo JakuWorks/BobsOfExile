@@ -1,4 +1,0 @@
-- If network breaks then:
-  - So to prevent queueing I could: Maintain a bool of is_connected/disconnected at all times using those events And additionally:
-    - make a network handler that disallows any network requests when there is no connection
-    - as soon as there's a disconnect, close my socket and re-create it (to empty any queues) (since the is_connected bool will be false until a new connection is established, the new socket will be alive but not used and also not usable)

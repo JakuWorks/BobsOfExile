@@ -16,6 +16,7 @@ from .cmd_convenience import (
 )
 from .discord_convenience import respond_text_or_file_from_call_context as respond
 from .networking import NetworkingMessage
+from .main_convenience import get_future_time
 
 NAME: str = "testpowerdeviceconnectionrequest"
 
@@ -43,7 +44,7 @@ async def call_cmd_testpowerdeviceconnectionrequest_raw(
 ) -> None:
     await respond(call_context, "Trying")
     msg_request: NetworkingMessage = NetworkingMessage(
-        code=NETCODE_REQUEST_POWER_DEVICE_STATUS, id=None, is_reply=False
+        code=NETCODE_REQUEST_POWER_DEVICE_STATUS, id=None, is_reply=False, expiration=get_future_time(POWER_DEVICE_STATUS_REQUEST_TIMEOUT)
     )
     reply: NetworkingMessage | None = (
         await call_context.grand.networking_handler.request(

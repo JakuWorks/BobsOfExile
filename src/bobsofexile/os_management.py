@@ -21,7 +21,7 @@ from .networking import (
     NetworkingHandler,
     RequestReplyContextYoung,
 )
-from .clientpower import PowerController
+from .power_device import PowerController, PowerDeviceConnectedResponse
 
 
 def graceful_shutdown_linux() -> None:
@@ -61,14 +61,17 @@ class ShutdownResponder:
             code=NETCODE_REPLY_POWEROFF_SOON_NO,
             id=ctx.youngest.msg.id,
             is_reply=True,
+            expiration=ctx.youngest.msg.expiration
         )
         msg_ok: NetworkingMessage = NetworkingMessage(
             code=NETCODE_REPLY_POWEROFF_SOON_OK,
             id=ctx.youngest.msg.id,
             is_reply=True,
+            expiration=ctx.youngest.msg.expiration
         )
 
-        if not await self.client_power_controller.test_device():
+        connected: PowerDeviceConnectedResponse | None = await self.client_power_controller.get_connected()
+        if connected is None or not connected.connected:
             logging.info("No client shutdown due to failed device test")
             await ctx.young.networking_handler.reply(msg_no)
             return
@@ -87,8 +90,11 @@ class ShutdownResponder:
                 retries=POWEROFF_RETRIES, interval=POWEROFF_RETRY_INTERVAL
             )
         )
-        async for success in shutdown_retrier:
-            logging.info(f"Shutdown attempt of client (local) {success=}")
+        try:
+            async for success in shutdown_retrier:
+                logging.info(f"Shutdown attempt of client (local) {success=}")
+        except StopAsyncIteration:
+            pass
 
 
 class PowerDeviceStatusResponder:
@@ -114,14 +120,17 @@ class PowerDeviceStatusResponder:
             code=NETCODE_REPLY_POWER_DEVICE_STATUS_NO,
             id=ctx.youngest.msg.id,
             is_reply=True,
+            expiration=ctx.youngest.msg.expiration
         )
         msg_ok: NetworkingMessage = NetworkingMessage(
             code=NETCODE_REPLY_POWER_DEVICE_STATUS_OK,
             id=ctx.youngest.msg.id,
             is_reply=True,
+            expiration=ctx.youngest.msg.expiration
         )
 
-        if await self.client_power_controller.test_device():
+        connected: PowerDeviceConnectedResponse | None = await self.client_power_controller.get_connected()
+        if connected is not None and connected.connected:
             logging.info("Replying client power device OK")
             await ctx.young.networking_handler.reply(msg_ok)
         else:

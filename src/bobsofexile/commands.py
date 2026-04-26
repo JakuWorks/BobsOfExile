@@ -9,7 +9,7 @@ import discord
 from .networking import NetworkingHandler
 from .permissions import PermissionResolver
 from .minecraft import MinecraftInstance, MinecraftContext
-from .clientpower import PowerController
+from .power_device import PowerController
 
 
 class CommandEntry:

@@ -1,5 +1,3 @@
-import logging
-
 import asyncclick as click
 
 from .calls_convenience import simple_wrap_command_call
@@ -10,17 +8,17 @@ from .cmd_convenience import (
     simple_setup_cmd,
 )
 from .discord_convenience import respond_text_or_file_from_call_context as respond
-from .power_device import PowerDeviceConnectedResponse
+from .power_device import PowerDeviceDetails
 
-NAME: str = "testpowerdeviceconnection"
+NAME: str = "powerstatus"
 
 
-def setup_cmd_testpowerdeviceconnection(
+def setup_cmd_powerstatus(
     commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
 ) -> None:
     permission_info: PermissionInfo = ranks_registry.get_everyone_permission_info()
 
-    callback = click.pass_context(call_cmd_testpowerdeviceconnection)
+    callback = click.pass_context(call_cmd_powerstatus)
     command: click.Command = click.Command(
         name=NAME, callback=callback, add_help_option=False
     )
@@ -33,21 +31,23 @@ def setup_cmd_testpowerdeviceconnection(
     )
 
 
-async def call_cmd_testpowerdeviceconnection_raw(call_context: CallContext) -> None:
+async def call_cmd_powerstatus_raw(call_context: CallContext) -> None:
     if call_context.grand.client_power_controller is None:
         await respond(call_context, "No power controller")
         return
-    connected: PowerDeviceConnectedResponse | None = await call_context.grand.client_power_controller.get_connected()
-    if connected is None:
-        await respond(call_context, "Failed to retrieve connection status")
+    details: PowerDeviceDetails | None = await call_context.grand.client_power_controller.get_details()
+    if details is None:
+        await respond(call_context, "Unable to retrieve details")
         return
-    await respond(call_context, f"Connected: {connected.connected}")
-    logging.info(f"Tested device connection ({connected.connected=})")
+    status_t: str = (
+         f"Connected: {details.connected}"
+         f"\nTurned on: {details.turned_on}"
+    )
+    await respond(call_context, f"Status:\n```\n{status_t}\n```")
+
+async def call_cmd_powerstatus(ctx: click.Context, /) -> None: ...
 
 
-async def call_cmd_testpowerdeviceconnection(ctx: click.Context, /) -> None: ...
-
-
-call_cmd_testpowerdeviceconnection = simple_wrap_command_call(
-    call_cmd_testpowerdeviceconnection_raw, respect_lock=False
+call_cmd_powerstatus = simple_wrap_command_call(
+    call_cmd_powerstatus_raw, respect_lock=False
 )

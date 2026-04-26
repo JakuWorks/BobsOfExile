@@ -74,4 +74,6 @@ async def call_cmd_serverview(
 ) -> None: ...
 
 
-call_cmd_serverview = simple_wrap_command_call(call_cmd_serverview_raw, respect_lock=False)
+call_cmd_serverview = simple_wrap_command_call(
+    call_cmd_serverview_raw, respect_lock=False
+)

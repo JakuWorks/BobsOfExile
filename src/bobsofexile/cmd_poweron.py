@@ -14,6 +14,7 @@ from .cmd_convenience import (
 )
 from .discord_convenience import respond_text_or_file_from_call_context as respond
 from .discord_streaming_message import DiscordStreamingMessage
+from .power_device import PowerDeviceDetails
 
 NAME: str = "poweron"
 
@@ -46,10 +47,11 @@ async def call_cmd_poweron_raw(call_context: CallContext) -> None:
     # fmt: off
     msg_begin: str = "Local (client) power on results:"
 
-    msg_device_test: str = "Testing power device connection..."
-    msg_device_test_ok: str = "Power device connection OK"
-    msg_device_test_no: str = "Power device connection NOT OK. The client WILL NOT be powered on."
-
+    msg_device_details: str = "Checking power device details..."
+    msg_device_test_ok: str = "Power device connection OK..."
+    msg_device_test_no: str = "Power device connection NOT OK... The client WILL NOT be powered on."
+    msg_device_already_on_yes: str = "Device already powered on... The client ALREADY IS powered on."
+    msg_device_already_on_no: str = "Device currently not powered on..."
     msg_begin_poweron_attempts: str = "Attempting power on..."
 
     msg_final_ok: str = (
@@ -66,14 +68,24 @@ async def call_cmd_poweron_raw(call_context: CallContext) -> None:
     logging.info(msg_begin)
     await message.start()
 
-    logging.info(msg_device_test)
-    await message.add_line(msg_device_test)
-    if not await call_context.grand.client_power_controller.test_device():
+    details: PowerDeviceDetails | None = await call_context.grand.client_power_controller.get_details()
+
+    logging.info(msg_device_details)
+    await message.add_line(msg_device_details)
+
+    if details is None or not details.connected:
         logging.info(msg_device_test_no)
         await message.add_line(msg_device_test_no)
         return
     logging.info(msg_device_test_ok)
     await message.add_line(msg_device_test_ok)
+
+    if details.turned_on:
+        logging.info(msg_device_already_on_yes)
+        await message.add_line(msg_device_already_on_yes)
+        return
+    logging.info(msg_device_already_on_no)
+    await message.add_line(msg_device_already_on_no)
 
     power_on_retrier: AsyncIterable[bool] = (
         call_context.grand.client_power_controller.power_on_async_with_retries(

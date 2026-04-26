@@ -10,15 +10,15 @@ from .permissions import PermissionInfo
 from .main_convenience import get_env_or_error
 
 
-def owners_from_environment() -> list[str]:
+def owners_from_environment() -> Sequence[str]:
     owner_raw: str = get_env_or_error(ENV_KEY_RANK_OWNER_USERS)
-    owners: list[str] = owner_raw.split(BOT_RANKS_SEPARATOR)
+    owners: Sequence[str] = owner_raw.split(BOT_RANKS_SEPARATOR)
     return owners
 
 
-def trusted_from_environment() -> list[str]:
+def trusted_from_environment() -> Sequence[str]:
     trusted_raw: str = get_env_or_error(ENV_KEY_RANK_TRUSTED_USERS)
-    trusted: list[str] = trusted_raw.split(BOT_RANKS_SEPARATOR)
+    trusted: Sequence[str] = trusted_raw.split(BOT_RANKS_SEPARATOR)
     return trusted
 
 

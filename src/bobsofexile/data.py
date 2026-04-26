@@ -48,7 +48,7 @@ class RecentBytesBuffer:
         as_lines: Sequence[str] = self.as_lines(
             max_lines, errors_decoding_mode=errors_decoding_mode
         )
-        lines: list[str] = list()
+        lines: Sequence[str] = list()
         ellipsis_l: int = len(ellipsis)
         max_length_with_ellipsis: int = max(0, max_line_length - ellipsis_l)
         for line in as_lines:

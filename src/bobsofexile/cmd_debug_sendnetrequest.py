@@ -11,6 +11,7 @@ from .cmd_convenience import (
 )
 from .networking import NetworkingMessage
 from .discord_streaming_message import DiscordStreamingMessage
+from .main_convenience import get_future_time
 
 NAME: str = "debug_sendnetrequest"
 
@@ -41,7 +42,7 @@ async def call_cmd_debug_sendnetrequest_raw(
     call_context: CallContext, code: int, timeout: int
 ) -> None:
     logging.info(f"Sending debug net request with code {code=} {timeout=}")
-    msg: NetworkingMessage = NetworkingMessage(code=code, is_reply=False, id=None)
+    msg: NetworkingMessage = NetworkingMessage(code=code, is_reply=False, id=None, expiration=get_future_time(timeout))
     streaming_message: DiscordStreamingMessage = DiscordStreamingMessage(
         initial_content=f"Requesting with code {msg.code=} {msg.is_reply=} {msg.id=} and will time out in {timeout=}",
         command_context=call_context.young.message_context,

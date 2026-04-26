@@ -31,6 +31,7 @@ from .networking import NetworkingMessage
 from .discord_streaming_message import DiscordStreamingMessage
 from .minecraft import MinecraftInstance
 from .os_management import graceful_shutdown_linux
+from .main_convenience import get_future_time
 
 NAME: str = "poweroff"
 
@@ -57,11 +58,11 @@ async def call_cmd_poweroff_raw(call_context: CallContext) -> None:
     # fmt: off
     msg_begin: str = "Power off results:"
 
-    msg_device_test: str = "Asking the server (remote) for the device connection status..."
-    msg_device_test_ok: str = "Power device connection OK"
-    msg_device_test_no: str = "Power device connection NOT OK. The client WILL NOT be powered on."
-    msg_device_test_timed_out: str = "Timed out without any response! The client WILL NOT be powered off."
-    msg_device_test_unknown: str = "Power device connection reply is unknown and not understood by this program. The client WILL NOT be powered off."
+    msg_device_test: str = "Asking the server (remote) for the device status..."
+    msg_device_test_ok: str = "Power device connection OK..."
+    msg_device_test_no: str = "Power device connection NOT OK... The client WILL NOT be powered off."
+    msg_device_test_timed_out: str = "Timed out without any response... The client WILL NOT be powered off."
+    msg_device_test_unknown: str = "Power device connection reply is unknown and not understood by this program... The client WILL NOT be powered off."
 
     msg_minecraft_running: str = f"A Minecraft instance is running. Will attempt to shut it down and wait up to {POWEROFF_MINECRAFT_WAIT_TIME} seconds for it to stop..."
     msg_minecraft_not_running: str = "No Minecraft instance is running..."
@@ -72,7 +73,7 @@ async def call_cmd_poweroff_raw(call_context: CallContext) -> None:
     msg_poweroff_request_timed_out: str = "Timed out without any response! The client WILL NOT be powered off.\n(note: if there was a network error that prevented us from getting the response then power supply will be cut soon even though the OS is running)"
     msg_poweroff_request_ok: str = f"Got OK from server (remote). The power WILL be cut in approximately {POWEROFF_WAIT_TIME_SECONDS} seconds."
     msg_poweroff_request_no: str = f"Got NO from server (remote). The client WILL NOT be powered off."
-    msg_poweroff_request_unknown: str = f"Power off request reply is unknown and not understood by this program. The client MAY OR MAY NOT be powered off.."
+    msg_poweroff_request_unknown: str = f"Power off request's reply is unknown and not understood by this program... The client MAY OR MAY NOT be powered off."
     # fmt: on
 
     message: DiscordStreamingMessage = DiscordStreamingMessage(
@@ -85,7 +86,7 @@ async def call_cmd_poweroff_raw(call_context: CallContext) -> None:
     await message.add_line(msg_device_test)
 
     device_test_msg: NetworkingMessage = NetworkingMessage(
-        code=NETCODE_REQUEST_POWER_DEVICE_STATUS, id=None, is_reply=False
+        code=NETCODE_REQUEST_POWER_DEVICE_STATUS, id=None, is_reply=False, expiration=get_future_time(POWEROFF_REQUEST_TIMEOUT)
     )
     power_device_test_response: NetworkingMessage | None = (
         await call_context.grand.networking_handler.request(
@@ -135,7 +136,7 @@ async def call_cmd_poweroff_raw(call_context: CallContext) -> None:
     await message.add_line(msg_poweroff_request)
 
     poweroff_request: NetworkingMessage = NetworkingMessage(
-        code=NETCODE_REQUEST_POWEROFF_SOON, id=None, is_reply=False
+        code=NETCODE_REQUEST_POWEROFF_SOON, id=None, is_reply=False, expiration=get_future_time(POWEROFF_REQUEST_TIMEOUT)
     )
     poweroff_response: NetworkingMessage | None = (
         await call_context.grand.networking_handler.request(

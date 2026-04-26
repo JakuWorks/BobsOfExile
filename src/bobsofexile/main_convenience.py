@@ -1,5 +1,6 @@
 import pathlib
 import os
+import time
 
 
 def get_env_or_error(key: str) -> str:
@@ -72,3 +73,7 @@ class MissingEnvironmentVariableError(EnvironmentVariableError):
 
 class IncorrectEnvironmentVariableError(EnvironmentVariableError):
     pass
+
+
+def get_future_time(after_seconds: float) -> float:
+    return time.time() + after_seconds

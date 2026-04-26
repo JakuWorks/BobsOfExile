@@ -16,6 +16,7 @@ from .cmd_testblocking import setup_cmd_testblocking
 from .cmd_testerror import setup_cmd_testerror
 from .cmd_testpermissions import setup_cmd_testpermissions
 from .cmd_teststream import setup_cmd_teststream
+from .cmd_testping import setup_cmd_testping
 
 from .ranks import RanksRegistry
 from .commands import CommandsRegistry
@@ -26,7 +27,11 @@ from .networking import (
     ReplyDispatcher,
     RequestReplier,
     LazySocket,
+    ILazySocket,
+    IOneTimeLazySocketCloner,
+    OneTimeLazySocketCloner,
 )
+from .ping_pong_responder import PingPongResponder
 
 from .hardcoded import (
     DISCORD_REACHABILITY_INTERVAL,
@@ -112,7 +117,7 @@ async def main_client() -> None:
 
     request_replier: RequestReplier = RequestReplier()
 
-    sock_lazy: LazySocket = LazySocket(
+    one_time_lazy_sock_cloner: IOneTimeLazySocketCloner = OneTimeLazySocketCloner(
         zmq_context=zmq_context,
         heartbeat_ivl=NET_HEARTBEAT_IVL_MS,
         heartbeat_timeout=NET_HEARTBEAT_TIMEOUT_MS,
@@ -123,6 +128,7 @@ async def main_client() -> None:
         listening_url=client_bind_url,
         requesting_and_replying_url=client_connect_url,
     )
+    sock_lazy: ILazySocket = LazySocket(cloner=one_time_lazy_sock_cloner)
     await sock_lazy.start()
 
     networking_handler: NetworkingHandler = NetworkingHandler(
@@ -131,6 +137,9 @@ async def main_client() -> None:
         sock_lazy=sock_lazy,
     )
     await networking_handler.start()
+
+    ping_pong_responder: PingPongResponder = PingPongResponder()
+    ping_pong_responder.start(networking_handler=networking_handler)
 
     minecraft_context: MinecraftContext = MinecraftContext()
 
@@ -156,6 +165,7 @@ async def main_client() -> None:
     setup_cmd_testerror(commands_registry, ranks_registry)
     setup_cmd_testpermissions(commands_registry, ranks_registry)
     setup_cmd_teststream(commands_registry, ranks_registry)
+    setup_cmd_testping(commands_registry, ranks_registry)
 
     setup_cmd_testpowerdeviceconnectionrequest(commands_registry, ranks_registry)
 
@@ -183,12 +193,16 @@ async def main_server() -> None:
         setup_cmd_debug_setupsimplenetcodereplier,
     )
     from .cmd_poweron import setup_cmd_poweron
+    from .cmd_powerstatus import setup_cmd_powerstatus
     from .cmd_dangerous_instant_poweroff import setup_cmd_dangerous_instant_poweroff
 
     from .os_management import ShutdownResponder, PowerDeviceStatusResponder
-    from .clientpower import TuyaPowerController, PowerController
+    from .power_device import PowerController
+    from .power_device_tinytuya import TuyaPowerController
 
     from .cmd_testpowerdeviceconnection import setup_cmd_testpowerdeviceconnection
+
+    import tinytuya # pyright: ignore[reportMissingTypeStubs]
 
     logging.info("Server main start!" + "-" * 50)
 
@@ -215,10 +229,13 @@ async def main_server() -> None:
     tuya_device_id: str = get_env_or_error(ENV_KEY_TUYA_DEVICE_ID)
     tuya_power_on_command: Mapping[Any, Any] = TUYA_POWER_ON_CMD
     tuya_power_off_command: Mapping[Any, Any] = TUYA_POWER_OFF_CMD
+    tuya_cloud: tinytuya.Cloud = tinytuya.Cloud(
+        apiRegion=tuya_region,
+        apiKey=tuya_access_id,
+        apiSecret=tuya_access_secret
+    )
     client_power_controller: PowerController = TuyaPowerController(
-        access_id=tuya_access_id,
-        access_secret=tuya_access_secret,
-        region=tuya_region,
+        cloud=tuya_cloud,
         device_id=tuya_device_id,
         power_on_command=tuya_power_on_command,
         power_off_command=tuya_power_off_command,
@@ -227,7 +244,8 @@ async def main_server() -> None:
     zmq_context: zmq.asyncio.Context = zmq.asyncio.Context()
     reply_dispatcher: ReplyDispatcher = ReplyDispatcher()
     request_replier: RequestReplier = RequestReplier()
-    sock_lazy: LazySocket = LazySocket(
+
+    one_time_lazy_sock_cloner: IOneTimeLazySocketCloner = OneTimeLazySocketCloner(
         zmq_context=zmq_context,
         listening_url=server_bind_url,
         requesting_and_replying_url=server_connect_url,
@@ -238,13 +256,18 @@ async def main_server() -> None:
         heartbeat_ivl=NET_HEARTBEAT_IVL_MS,
         heartbeat_timeout=NET_HEARTBEAT_TIMEOUT_MS,
     )
+    sock_lazy: ILazySocket = LazySocket(cloner=one_time_lazy_sock_cloner)
     await sock_lazy.start()
+
     networking_handler: NetworkingHandler = NetworkingHandler(
         reply_dispatcher=reply_dispatcher,
         request_replier=request_replier,
         sock_lazy=sock_lazy,
     )
     await networking_handler.start()
+
+    ping_pong_responder: PingPongResponder = PingPongResponder()
+    ping_pong_responder.start(networking_handler=networking_handler)
 
     # UNUSED!!! BUT MUST BE CREATED DUE TO SHITTY CODE
     minecraft_context: MinecraftContext = MinecraftContext()
@@ -282,6 +305,7 @@ async def main_server() -> None:
     setup_cmd_testerror(commands_registry, ranks_registry)
     setup_cmd_testpermissions(commands_registry, ranks_registry)
     setup_cmd_teststream(commands_registry, ranks_registry)
+    setup_cmd_testping(commands_registry, ranks_registry)
 
     setup_cmd_testpowerdeviceconnection(commands_registry, ranks_registry)
 
@@ -290,6 +314,7 @@ async def main_server() -> None:
     setup_cmd_debug_setupsimplenetcodereplier(commands_registry, ranks_registry)
 
     setup_cmd_poweron(commands_registry, ranks_registry)
+    setup_cmd_powerstatus(commands_registry, ranks_registry)
     setup_cmd_dangerous_instant_poweroff(commands_registry, ranks_registry)
 
     token: str = get_env_or_error(ENV_KEY_TOKEN)
@@ -371,6 +396,7 @@ def main() -> None:
         logging.info(f"Checking discord reachability {i}")
         discord_reachable = check_is_reachable("discord.com")
         if discord_reachable:
+            logging.info("Discord is reachable")
             break
         time.sleep(DISCORD_REACHABILITY_INTERVAL)
     if not discord_reachable:

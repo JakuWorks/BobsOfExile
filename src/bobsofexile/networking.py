@@ -22,6 +22,7 @@ import asyncio
 import uuid
 
 from .async_convenience import wait_while_not_cancelled
+from .main_convenience import ensure_existence_and_type
 
 import zmq
 import zmq.asyncio
@@ -65,7 +66,7 @@ class NetworkingMessage:
     expiration: float | int
 
     def __init__(self, code: int, id: str | None, is_reply: bool, expiration: float | int) -> None:
-        # Responses can just set their expiration as the request's expiration. It's not required though and isn't enforced
+        # Most of the time, responses can just set their expiration as the request's expiration. It's not required though and isn't enforced
         assert (not is_reply) or (
             is_reply and code is not None
         ), "A reply cannot auto-generate IDs"
@@ -91,40 +92,17 @@ class NetworkingMessage:
             }
         )
 
-    @classmethod
-    def from_json(cls, json_data: str | bytes | bytearray) -> "NetworkingMessage":
-        loaded: Any = json.loads(json_data)
+    def is_expired(self) -> bool:
+        return time.time() > self.expiration
 
-        if not isinstance(loaded, Mapping):
-            raise InvalidNetworkingMessageStructureError("Wrong loaded type")
-
-        #fmt: off
-        code: Any = loaded.get(cls.KEY_CODE, None) # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-        if code is None:
-            raise InvalidNetworkingMessageStructureError("Missing code")
-        if not isinstance(code, int): # pyright: ignore[reportUnknownArgumentType]
-            raise InvalidNetworkingMessageStructureError("Wrong type of code")
-
-        id: Any = loaded.get(cls.KEY_ID, None) # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] 
-        if id is None:
-            raise InvalidNetworkingMessageStructureError("Missing id")
-        if not isinstance(id, str): # pyright: ignore[reportUnknownArgumentType] 
-            raise InvalidNetworkingMessageStructureError("Wrong type of id")
-
-        is_reply: Any = loaded.get(cls.KEY_IS_REPLY, None) # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] 
-        if is_reply is None:
-            raise InvalidNetworkingMessageStructureError("Missing is_reply")
-        if not isinstance(is_reply, bool): # pyright: ignore[reportUnknownArgumentType]
-            raise InvalidNetworkingMessageStructureError("Wrong type of is_reply")
-        #fmt: on
-
-        expiration: Any = loaded.get(cls.KEY_EXPIRATION, None) # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-        if expiration is None:
-            raise InvalidNetworkingMessageStructureError("Missing expiration")
-        if not isinstance(expiration, float) and not isinstance(expiration, int):
-            raise InvalidNetworkingMessageStructureError("Wrong type of expiration")
-
-        return cls(code=code, id=id, is_reply=is_reply, expiration=expiration)
+def networking_message_from_json(json_data: str | bytes | bytearray) -> "NetworkingMessage":
+    loaded_raw: Any = json.loads(json_data)
+    loaded: Mapping[Any, Any] = ensure_existence_and_type('loaded data', Mapping, loaded_raw,                              InvalidNetworkingMessageStructureError, InvalidNetworkingMessageStructureError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+    code: int = ensure_existence_and_type('code', int, loaded.get(NetworkingMessage.KEY_CODE, None),                       InvalidNetworkingMessageStructureError, InvalidNetworkingMessageStructureError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+    id: str = ensure_existence_and_type('id', str, loaded.get(NetworkingMessage.KEY_ID, None),                             InvalidNetworkingMessageStructureError, InvalidNetworkingMessageStructureError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+    is_reply: int = ensure_existence_and_type('is_reply', bool, loaded.get(NetworkingMessage.KEY_IS_REPLY, None),          InvalidNetworkingMessageStructureError, InvalidNetworkingMessageStructureError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+    expiration: float = ensure_existence_and_type('expiration', float, loaded.get(NetworkingMessage.KEY_EXPIRATION, None), InvalidNetworkingMessageStructureError, InvalidNetworkingMessageStructureError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+    return NetworkingMessage(code=code, id=id, is_reply=is_reply, expiration=expiration)
 
 
 class InvalidNetworkingMessageStructureError(Exception):
@@ -160,19 +138,27 @@ class NetworkingHandler:
             msg_bytes: bytes = await self.sock_lazy.recv()
             logging.info("Received SOME msg")
             try:
-                as_message: NetworkingMessage = NetworkingMessage.from_json(msg_bytes)
+                as_message: NetworkingMessage = networking_message_from_json(msg_bytes)
             except InvalidNetworkingMessageStructureError:
                 logging.info("SOME message had invalid structure")
                 continue
+            
             if as_message.is_reply:
                 logging.info(
-                    f"SOME was a reply | Code | {as_message.code} | ID | {as_message.id}"
+                    f"SOME was a reply | Code | {as_message.code} | ID | {as_message.id} | Expiration {as_message.expiration} "
                 )
+                if as_message.is_expired():
+                    logging.info("SOME was already expired (and therefore ignored)")
+                    continue
                 await self.reply_dispatcher.dispatch_reply(as_message)
+
             else:
                 logging.info(
-                    f"SOME was a request | Code | {as_message.code} | ID | {as_message.id}"
+                    f"SOME was a request | Code | {as_message.code} | ID | {as_message.id} | Expiration {as_message.expiration}"
                 )
+                if time.time() > as_message.expiration:
+                    logging.info("SOME was already expired")
+                    continue
                 request_reply_context_youngest: RequestReplyContextYoungest = (
                     RequestReplyContextYoungest(msg=as_message)
                 )
@@ -181,22 +167,22 @@ class NetworkingHandler:
                 )
 
     async def request(
-        self, msg: NetworkingMessage, timeout: float
+        self, msg: NetworkingMessage
     ) -> NetworkingMessage | None:
-        # requesting_socket = self.zmq_context.socket(zmq.DEALER)
-        # requesting_socket.connect(self.requesting_and_replying_url) # May raise an uncaught zmq error!
         reply_dispatcher_request: ReplyDispatcherRequest = ReplyDispatcherRequest(
             id=msg.id, reply_queue=asyncio.Queue()
         )
+
+        timeout: float = max(0, msg.expiration - time.time())
         await self.reply_dispatcher.setup_wait_for(
             reply_dispatcher_request, timeout=timeout
         )
+
         data_to_send: SocketDataToSend[bytes] = SocketDataToSend(
             data=msg.to_json().encode("utf-8"),
             expiry_time=msg.expiration
         )
         await self.sock_lazy.send(data_to_send)
-        # requesting_socket.close()
         reply: NetworkingMessage | None = await self.reply_dispatcher.wait_for_reply(
             msg.id
         )

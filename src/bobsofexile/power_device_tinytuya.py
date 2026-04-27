@@ -1,7 +1,8 @@
 import asyncio
-from typing import Mapping, Any, AsyncIterator, TypeVar, Type, Sequence
+from typing import Mapping, Any, AsyncIterator, Sequence
 import logging
 
+from .main_convenience import ensure_existence_and_type, ensure_existence
 from .hardcoded import (
     TUYA_RESPONSE_COMMAND_KEY_SUCCESS,
     TUYA_RESPONSE_STATUS_RESULT_CODE_POWER_SWITCH,
@@ -25,59 +26,23 @@ class WrongTuyaResponseFormatError(Exception):
     pass
 
 
-def ensure_existence_for_tiny_tuya_response_item(
-    name: str, value: Any, existence_error_format: str
-) -> Any:
-    if value is None:
-        raise WrongTuyaResponseFormatError(existence_error_format.format(name))
-    return value
-
-
-TypeToCast = TypeVar("TypeToCast", covariant=False, contravariant=False)
-
-
-def ensure_existence_and_type_for_tiny_tuya_response_item(
-    name: str,
-    expected_type: Type[TypeToCast],
-    value: Any,
-    existence_error_format: str,
-    type_error_format: str,
-) -> TypeToCast:
-    if value is None:
-        raise WrongTuyaResponseFormatError(existence_error_format.format(name))
-    if not isinstance(value, expected_type):
-        raise WrongTuyaResponseFormatError(type_error_format.format(name))
-    return value
-
-
 def get_power_device_command_response_from_tuya_response(
     command_response_raw: Any,
 ) -> PowerDeviceCommandResponse:
-    if not isinstance(command_response_raw, Mapping):
-        raise WrongTuyaResponseFormatError(f"Wrong type of response")
-
-    success: Any = command_response_raw.get(TUYA_RESPONSE_COMMAND_KEY_SUCCESS, None) # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] # fmt: skip
-    if success is None:
-        raise WrongTuyaResponseFormatError("Missing key for success")
-    if not isinstance(success, bool):
-        raise WrongTuyaResponseFormatError("Wrong type of success")
-
+    response: Mapping[Any, Any] = ensure_existence_and_type('response', Mapping, command_response_raw,                WrongTuyaResponseFormatError, WrongTuyaResponseFormatError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+    success: bool = ensure_existence_and_type('success', bool, response.get(TUYA_RESPONSE_COMMAND_KEY_SUCCESS, None), WrongTuyaResponseFormatError, WrongTuyaResponseFormatError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
     return PowerDeviceCommandResponse(success=success)
 
 
 def merge_tuya_response_result_list(
     result_raw: Sequence[Any], structural_key_code: str, structural_key_value: str
 ) -> Mapping[str, Any]:
-    existence_error_format: str = "Massing key for {0}"
-    type_error_format: str = "Wrong type of {0}"
-
     merged: Mapping[str, Any] = dict()
 
-    for item in result_raw:
-        if not isinstance(item, dict):
-            raise WrongTuyaResponseFormatError("Wrong type of result item")
-        code: str = ensure_existence_and_type_for_tiny_tuya_response_item('code', str, item.get(structural_key_code, None), existence_error_format, type_error_format)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] # fmt: skip
-        value: Any = ensure_existence_for_tiny_tuya_response_item('value', item.get(structural_key_value, None), existence_error_format)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] # fmt: skip
+    for item_raw in result_raw:
+        item: Mapping[Any, Any] = ensure_existence_and_type('result item', Mapping, item_raw,   WrongTuyaResponseFormatError, WrongTuyaResponseFormatError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+        code: str = ensure_existence_and_type('code', str, item.get(structural_key_code, None), WrongTuyaResponseFormatError, WrongTuyaResponseFormatError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+        value: Any = ensure_existence('value', item.get(structural_key_value, None),            WrongTuyaResponseFormatError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
         merged[code] = value
     return merged
 
@@ -85,25 +50,19 @@ def merge_tuya_response_result_list(
 def get_power_device_status_from_tuya_response(
     status_raw: Any,
 ) -> PowerDeviceStatusResponse:
-    existence_error_format: str = "Massing key for {0}"
-    type_error_format: str = "Wrong type of {0}"
-
-    if not isinstance(status_raw, Mapping):
-        raise WrongTuyaResponseFormatError(type_error_format.format("response"))
-    success: bool = ensure_existence_and_type_for_tiny_tuya_response_item('success', bool, status_raw.get(TUYA_RESPONSE_STATUS_KEY_SUCCESS, None), existence_error_format, type_error_format)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] # fmt: skip
-    result: Sequence[Any] = ensure_existence_and_type_for_tiny_tuya_response_item('result', Sequence, status_raw.get(TUYA_RESPONSE_STATUS_STRUCTURAL_KEY_RESULT, None), existence_error_format, type_error_format)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] # fmt: skip
-    result_merged: Mapping[str, Any] = merge_tuya_response_result_list(result_raw=result, structural_key_code=TUYA_RESPONSE_STATUS_STRUCTURAL_KEY_CODE, structural_key_value=TUYA_RESPONSE_STATUS_STRUCTURAL_KEY_VALUE)  # pyright: ignore[reportArgumentType] # fmt: skip
-    turned_on: bool = ensure_existence_and_type_for_tiny_tuya_response_item('turned on', bool, result_merged.get(TUYA_RESPONSE_STATUS_RESULT_CODE_POWER_SWITCH, None), existence_error_format, type_error_format)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] # fmt: skip
+    status: Mapping[Any, Any] = ensure_existence_and_type('raw status', Mapping, status_raw,                                               WrongTuyaResponseFormatError, WrongTuyaResponseFormatError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+    success: bool = ensure_existence_and_type('success', bool, status.get(TUYA_RESPONSE_STATUS_KEY_SUCCESS, None),                         WrongTuyaResponseFormatError, WrongTuyaResponseFormatError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+    result: Sequence[Any] = ensure_existence_and_type('result', Sequence, status.get(TUYA_RESPONSE_STATUS_STRUCTURAL_KEY_RESULT, None),    WrongTuyaResponseFormatError, WrongTuyaResponseFormatError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+    result_merged: Mapping[str, Any] = merge_tuya_response_result_list(result_raw=result, structural_key_code=TUYA_RESPONSE_STATUS_STRUCTURAL_KEY_CODE, structural_key_value=TUYA_RESPONSE_STATUS_STRUCTURAL_KEY_VALUE)  # pyright: ignore[reportArgumentType]  # fmt: skip
+    turned_on: bool = ensure_existence_and_type('turned on', bool, result_merged.get(TUYA_RESPONSE_STATUS_RESULT_CODE_POWER_SWITCH, None), WrongTuyaResponseFormatError, WrongTuyaResponseFormatError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
     return PowerDeviceStatusResponse(success=success, turned_on=turned_on)
 
 
 def get_connected_from_tuya_response(
     connected_raw: Any,
 ) -> PowerDeviceConnectedResponse:
-    type_error_format: str = "Wrong type of {0}"
-    if not isinstance(connected_raw, bool):
-        raise WrongTuyaResponseFormatError(type_error_format.format("connected"))
-    return PowerDeviceConnectedResponse(connected=connected_raw)
+    connected: bool = ensure_existence_and_type('connected', bool, connected_raw, WrongTuyaResponseFormatError, WrongTuyaResponseFormatError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
+    return PowerDeviceConnectedResponse(connected=connected)
 
 
 class TuyaPowerController(PowerController):
@@ -138,7 +97,7 @@ class TuyaPowerController(PowerController):
         Catches tuya errors
         """
         try:
-            response_raw: Any = self.cloud.getstatus(deviceid=self.device_id) # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] # fmt: skip
+            response_raw: Any = self.cloud.getstatus(deviceid=self.device_id)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
         except Exception as e:  # TODO Specify exception types
             logging.error(f"Caught tuya error!", exc_info=e)
             return None
@@ -146,7 +105,7 @@ class TuyaPowerController(PowerController):
 
     async def get_connected(self) -> PowerDeviceConnectedResponse | None:
         try:
-            response_raw: Any = self.cloud.getconnectstatus(deviceid=self.device_id)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] # fmt: skip
+            response_raw: Any = self.cloud.getconnectstatus(deviceid=self.device_id)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
         except Exception as e:  # TODO Specify exception types
             logging.error(f"Caught tuya error!", exc_info=e)
             return None
@@ -159,14 +118,16 @@ class TuyaPowerController(PowerController):
             return None
         if connected is None:
             return None
-        return PowerDeviceDetails(turned_on=status.turned_on, connected=connected.connected)
+        return PowerDeviceDetails(
+            turned_on=status.turned_on, connected=connected.connected
+        )
 
     async def power_on_async(self) -> bool:
         """
         -> success
         Does not catch tuya's errors
         """
-        response_raw: Any = self.cloud.sendcommand(self.device_id, commands=self.power_on_command) # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] # fmt: skip
+        response_raw: Any = self.cloud.sendcommand(self.device_id, commands=self.power_on_command)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
         response: PowerDeviceCommandResponse = (
             get_power_device_command_response_from_tuya_response(response_raw)
         )
@@ -178,7 +139,7 @@ class TuyaPowerController(PowerController):
         -> success
         Does not catch tuya's errors
         """
-        response_raw: Any = self.cloud.sendcommand(self.device_id, commands=self.power_off_command) # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType] # fmt: skip
+        response_raw: Any = self.cloud.sendcommand(self.device_id, commands=self.power_off_command)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
         response: PowerDeviceCommandResponse = (
             get_power_device_command_response_from_tuya_response(response_raw)
         )

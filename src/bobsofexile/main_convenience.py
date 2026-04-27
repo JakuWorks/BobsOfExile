@@ -1,6 +1,9 @@
 import pathlib
 import os
 import time
+from typing import Type, TypeVar, Any
+
+from .hardcoded import CONVENIENCE_STANDARD_NO_EXIST_ERROR_FORMAT, CONVENIENCE_STANDARD_WRONG_TYPE_ERROR_FORMAT
 
 
 def get_env_or_error(key: str) -> str:
@@ -77,3 +80,33 @@ class IncorrectEnvironmentVariableError(EnvironmentVariableError):
 
 def get_future_time(after_seconds: float) -> float:
     return time.time() + after_seconds
+
+
+def ensure_existence(
+    name: str,
+    value: Any,
+    existence_error_type: Type[Exception],
+    existence_error_format: str = CONVENIENCE_STANDARD_NO_EXIST_ERROR_FORMAT,
+) -> Any:
+    if value is None:
+        raise existence_error_type(existence_error_format.format(name))
+    return value
+
+
+TypeToEnsure = TypeVar("TypeToEnsure", covariant=False, contravariant=False)
+
+
+def ensure_existence_and_type(
+    name: str,
+    expected_type: Type[TypeToEnsure],
+    value: Any,
+    existence_error_type: Type[Exception],
+    type_error_type: Type[Exception],
+    existence_error_format: str = CONVENIENCE_STANDARD_NO_EXIST_ERROR_FORMAT,
+    type_error_format: str = CONVENIENCE_STANDARD_WRONG_TYPE_ERROR_FORMAT,
+) -> TypeToEnsure:
+    if value is None:
+        raise existence_error_type(existence_error_format.format(name))
+    if not isinstance(value, expected_type):
+        raise type_error_type(type_error_format.format(name))
+    return value

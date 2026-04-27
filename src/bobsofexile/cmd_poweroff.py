@@ -58,7 +58,7 @@ async def call_cmd_poweroff_raw(call_context: CallContext) -> None:
     # fmt: off
     msg_begin: str = "Power off results:"
 
-    msg_device_test: str = "Asking the server (remote) for the device status..."
+    msg_device_test: str = f"Asking the server (remote) for the device status with a timeout of {POWER_DEVICE_STATUS_REQUEST_TIMEOUT} seconds..."
     msg_device_test_ok: str = "Power device connection OK..."
     msg_device_test_no: str = "Power device connection NOT OK... The client WILL NOT be powered off."
     msg_device_test_timed_out: str = "Timed out without any response... The client WILL NOT be powered off."
@@ -86,11 +86,11 @@ async def call_cmd_poweroff_raw(call_context: CallContext) -> None:
     await message.add_line(msg_device_test)
 
     device_test_msg: NetworkingMessage = NetworkingMessage(
-        code=NETCODE_REQUEST_POWER_DEVICE_STATUS, id=None, is_reply=False, expiration=get_future_time(POWEROFF_REQUEST_TIMEOUT)
+        code=NETCODE_REQUEST_POWER_DEVICE_STATUS, id=None, is_reply=False, expiration=get_future_time(POWER_DEVICE_STATUS_REQUEST_TIMEOUT)
     )
     power_device_test_response: NetworkingMessage | None = (
         await call_context.grand.networking_handler.request(
-            device_test_msg, timeout=POWER_DEVICE_STATUS_REQUEST_TIMEOUT
+            device_test_msg
         )
     )
     if power_device_test_response is None:
@@ -140,7 +140,7 @@ async def call_cmd_poweroff_raw(call_context: CallContext) -> None:
     )
     poweroff_response: NetworkingMessage | None = (
         await call_context.grand.networking_handler.request(
-            poweroff_request, timeout=POWEROFF_REQUEST_TIMEOUT
+            poweroff_request
         )
     )
     if poweroff_response is None:

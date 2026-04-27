@@ -1,7 +1,7 @@
 [project]
 name = "bobsofexile"
 description = "TODO"
-version = "4.0.1"
+version = "5.0.0"
 requires-python = ">=3.11.15"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -31,6 +31,7 @@ Homepage = "https://TODO.TODO"
 [tool.pyright]
 include = ["src"]
 strict = ['**']
+typeCheckingMode = "strict"
 exclude = [
     "**/.*",
     ".venv",

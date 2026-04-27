@@ -49,7 +49,7 @@ async def call_cmd_debug_sendnetrequest_raw(
     )
     await streaming_message.start()
     response: NetworkingMessage | None = (
-        await call_context.grand.networking_handler.request(msg=msg, timeout=timeout)
+        await call_context.grand.networking_handler.request(msg=msg)
     )
     if response is None:
         logging.info("Debug net request got no response")

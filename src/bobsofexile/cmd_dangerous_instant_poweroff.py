@@ -58,7 +58,7 @@ async def call_cmd_dangerous_instant_poweroff_raw(call_context: CallContext, ign
     if not ignore_ping:
         request_ping_msg: NetworkingMessage = NetworkingMessage(code=NETCODE_REQUEST_PING, is_reply=False, expiration=get_future_time(after_seconds=INSTANT_POWEROFF_PING_TIMEOUT), id=None)
         await message.add_line(msg_ping_request_format.format(INSTANT_POWEROFF_PING_TIMEOUT))
-        response: NetworkingMessage | None = await call_context.grand.networking_handler.request(request_ping_msg, timeout=INSTANT_POWEROFF_PING_TIMEOUT)
+        response: NetworkingMessage | None = await call_context.grand.networking_handler.request(request_ping_msg)
         if response is not None:
             await message.add_line(msg_ping_got)
         await message.add_line(msg_ping_miss)

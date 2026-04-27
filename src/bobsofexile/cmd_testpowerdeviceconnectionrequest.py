@@ -48,7 +48,7 @@ async def call_cmd_testpowerdeviceconnectionrequest_raw(
     )
     reply: NetworkingMessage | None = (
         await call_context.grand.networking_handler.request(
-            msg=msg_request, timeout=POWER_DEVICE_STATUS_REQUEST_TIMEOUT
+            msg=msg_request
         )
     )
     if reply is None:

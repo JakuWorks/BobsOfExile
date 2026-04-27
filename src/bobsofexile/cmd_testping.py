@@ -35,7 +35,7 @@ def setup_cmd_testping(
 
 async def call_cmd_testping_raw(call_context: CallContext) -> None:
     request_ping_msg: NetworkingMessage = NetworkingMessage(code=NETCODE_REQUEST_PING, is_reply=False, expiration=get_future_time(after_seconds=TESTPING_TIMEOUT), id=None)
-    response: NetworkingMessage | None = await call_context.grand.networking_handler.request(request_ping_msg, timeout=TESTPING_TIMEOUT)
+    response: NetworkingMessage | None = await call_context.grand.networking_handler.request(request_ping_msg)
     if response:
         await respond(call_context, "Pong!")
     else:

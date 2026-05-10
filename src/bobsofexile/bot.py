@@ -4,17 +4,28 @@ from typing import Callable, Any, Coroutine
 import asyncclick as click
 import discord
 
-from .commands import CommandsRegistry, CallContextYoung
+from .discord_responder import DiscordResponder
+from .commands import CommandsRegistry
+from .responder import IResponder
+from .async_convenience import IBooleanEvent, IMutableBooleanEvent, BooleanEvent
 
 
 class Bot:
-    __slots__ = ("prefix", "prefix_l", "client", "registry", "status")
+    __slots__ = (
+        "prefix",
+        "prefix_l",
+        "client",
+        "registry",
+        "status",
+        "_on_ready_event",
+    )
 
     prefix: str
     prefix_l: int
     client: discord.Client
     registry: CommandsRegistry
     status: str
+    _on_ready_event: IMutableBooleanEvent
 
     def __init__(self, prefix: str, registry: CommandsRegistry, status: str) -> None:
         self.prefix = prefix
@@ -22,13 +33,22 @@ class Bot:
         self.client: discord.Client = discord.Client(intents=self.get_needed_intents())
         self.registry = registry
         self.status = status
+        self._on_ready_event = BooleanEvent(
+            "Bot was set as ready", "Bot was set as ready AGAIN"
+        )
 
-        self.client.event(wrap_on_ready(self))
+        self.client.event(wrap_on_ready(self, on_ready_event=self._on_ready_event))
         self.client.event(wrap_on_message(self))
         self.client.event(wrap_on_error())
 
-    async def run(self, token: str) -> None:
-        await self.client.start(token)
+    async def login(self, token: str) -> None:
+        await self.client.login(token)
+
+    async def connect(self) -> None:
+        await self.client.connect(reconnect=True)
+
+    def get_ready_event(self) -> IBooleanEvent:
+        return self._on_ready_event
 
     def get_needed_intents(self) -> discord.Intents:
         intents: discord.Intents = discord.Intents.default()
@@ -49,12 +69,16 @@ def wrap_on_message(bot: Bot) -> Callable[[discord.Message], Coroutine[Any, Any,
         command_text: str = bot.get_after_prefix(message_context.content)
         if command_text == "":
             return
+
+        responder: IResponder = DiscordResponder(
+            sending_channel=message_context.channel
+        )
+
         try:
-            call_context: CallContextYoung = CallContextYoung(
-                message_context=message_context, respect_command_lock=True
-            )
             await bot.registry.call_command(
-                command_text, call_context_young=call_context
+                command_text,
+                author_id=str(message_context.author.id),
+                responder=responder,
             )
         except click.UsageError as e:
             if e.ctx is None:
@@ -69,7 +93,9 @@ def wrap_on_message(bot: Bot) -> Callable[[discord.Message], Coroutine[Any, Any,
     return on_message
 
 
-def wrap_on_ready(bot: Bot) -> Callable[[], Coroutine[Any, Any, None]]:
+def wrap_on_ready(
+    bot: Bot, on_ready_event: IMutableBooleanEvent
+) -> Callable[[], Coroutine[Any, Any, None]]:
     logging.info("Bot ready")
 
     async def on_ready() -> None:
@@ -84,6 +110,7 @@ def wrap_on_ready(bot: Bot) -> Callable[[], Coroutine[Any, Any, None]]:
 
         activity: discord.CustomActivity = discord.CustomActivity(name=status)
         await bot.client.change_presence(activity=activity)
+        on_ready_event.set()
 
     return on_ready
 

@@ -6,7 +6,7 @@ from .hardcoded import (
     ENV_KEY_RANK_OWNER_USERS,
     BOT_RANKS_SEPARATOR,
 )
-from .permissions import PermissionInfo
+from .permissions import IPermissionInfo, PermissionInfo
 from .main_convenience import get_env_or_error
 
 
@@ -40,18 +40,18 @@ class RanksRegistry:
         logging.info("Extending owners rank: " + ",".join(owners))
         self.owner.extend(owners)
 
-    def get_no_one_permission_info(self) -> PermissionInfo:
+    def get_no_one_permission_info(self) -> IPermissionInfo:
         return PermissionInfo(whitelist_enabled=True, users=[], description="No one")
 
-    def get_everyone_permission_info(self) -> PermissionInfo:
+    def get_everyone_permission_info(self) -> IPermissionInfo:
         return PermissionInfo(whitelist_enabled=False, users=[], description="Everyone")
 
-    def get_trusted_permission_info(self) -> PermissionInfo:
+    def get_trusted_permission_info(self) -> IPermissionInfo:
         return PermissionInfo(
             whitelist_enabled=True, users=self.trusted, description="Trusted"
         )
 
-    def get_owner_permission_info(self) -> PermissionInfo:
+    def get_owner_permission_info(self) -> IPermissionInfo:
         return PermissionInfo(
             whitelist_enabled=True, users=self.owner, description="Owner"
         )

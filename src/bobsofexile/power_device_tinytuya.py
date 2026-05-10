@@ -2,6 +2,8 @@ import asyncio
 from typing import Mapping, Any, AsyncIterator, Sequence
 import logging
 
+import tinytuya  # pyright: ignore[reportMissingTypeStubs]
+
 from .main_convenience import ensure_existence_and_type, ensure_existence
 from .hardcoded import (
     TUYA_RESPONSE_COMMAND_KEY_SUCCESS,
@@ -18,8 +20,6 @@ from .power_device import (
     PowerDeviceDetails,
     PowerDeviceConnectedResponse,
 )
-
-import tinytuya  # pyright: ignore[reportMissingTypeStubs]
 
 
 class WrongTuyaResponseFormatError(Exception):
@@ -170,7 +170,6 @@ class TuyaPowerController(PowerController):
             if success:
                 break
             await asyncio.sleep(interval)
-        raise StopAsyncIteration
 
     async def power_off_async_with_retries(
         self, retries: int, interval: float
@@ -196,4 +195,3 @@ class TuyaPowerController(PowerController):
             if success:
                 break
             await asyncio.sleep(interval)
-        raise StopAsyncIteration

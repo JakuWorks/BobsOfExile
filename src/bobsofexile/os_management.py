@@ -9,8 +9,8 @@ from .hardcoded import (
     POWEROFF_MOCK,
     NETCODE_REPLY_POWEROFF_SOON_NO,
     POWEROFF_CMD,
-    POWEROFF_RETRY_INTERVAL,
-    POWEROFF_RETRIES,
+    REMOTE_POWEROFF_RETRY_INTERVAL,
+    REMOTE_POWEROFF_RETRIES,
     NETCODE_REQUEST_POWER_DEVICE_STATUS,
     NETCODE_REPLY_POWER_DEVICE_STATUS_NO,
     NETCODE_REPLY_POWER_DEVICE_STATUS_OK,
@@ -33,6 +33,8 @@ def graceful_shutdown_linux() -> None:
 
 
 class ShutdownResponder:
+    """Meant for the server to act upon the client's requests to cut its power supply"""
+
     __slots__ = ("sleeping_time_after_request", "client_power_controller")
 
     sleeping_time_after_request: int | float
@@ -61,16 +63,18 @@ class ShutdownResponder:
             code=NETCODE_REPLY_POWEROFF_SOON_NO,
             id=ctx.youngest.msg.id,
             is_reply=True,
-            expiration=ctx.youngest.msg.expiration
+            expiration=ctx.youngest.msg.expiration,
         )
         msg_ok: NetworkingMessage = NetworkingMessage(
             code=NETCODE_REPLY_POWEROFF_SOON_OK,
             id=ctx.youngest.msg.id,
             is_reply=True,
-            expiration=ctx.youngest.msg.expiration
+            expiration=ctx.youngest.msg.expiration,
         )
 
-        connected: PowerDeviceConnectedResponse | None = await self.client_power_controller.get_connected()
+        connected: PowerDeviceConnectedResponse | None = (
+            await self.client_power_controller.get_connected()
+        )
         if connected is None or not connected.connected:
             logging.info("No client shutdown due to failed device test")
             await ctx.young.networking_handler.reply(msg_no)
@@ -87,14 +91,11 @@ class ShutdownResponder:
         logging.info("Shutting down client (unless there's a failure)")
         shutdown_retrier: AsyncIterator[bool] = (
             self.client_power_controller.power_off_async_with_retries(
-                retries=POWEROFF_RETRIES, interval=POWEROFF_RETRY_INTERVAL
+                retries=REMOTE_POWEROFF_RETRIES, interval=REMOTE_POWEROFF_RETRY_INTERVAL
             )
         )
-        try:
-            async for success in shutdown_retrier:
-                logging.info(f"Shutdown attempt of client (local) {success=}")
-        except StopAsyncIteration:
-            pass
+        async for success in shutdown_retrier:
+            logging.info(f"Shutdown attempt of client (local) {success=}")
 
 
 class PowerDeviceStatusResponder:
@@ -120,16 +121,18 @@ class PowerDeviceStatusResponder:
             code=NETCODE_REPLY_POWER_DEVICE_STATUS_NO,
             id=ctx.youngest.msg.id,
             is_reply=True,
-            expiration=ctx.youngest.msg.expiration
+            expiration=ctx.youngest.msg.expiration,
         )
         msg_ok: NetworkingMessage = NetworkingMessage(
             code=NETCODE_REPLY_POWER_DEVICE_STATUS_OK,
             id=ctx.youngest.msg.id,
             is_reply=True,
-            expiration=ctx.youngest.msg.expiration
+            expiration=ctx.youngest.msg.expiration,
         )
 
-        connected: PowerDeviceConnectedResponse | None = await self.client_power_controller.get_connected()
+        connected: PowerDeviceConnectedResponse | None = (
+            await self.client_power_controller.get_connected()
+        )
         if connected is not None and connected.connected:
             logging.info("Replying client power device OK")
             await ctx.young.networking_handler.reply(msg_ok)

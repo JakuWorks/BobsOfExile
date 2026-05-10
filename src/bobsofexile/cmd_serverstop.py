@@ -1,45 +1,38 @@
 import asyncclick as click
 
 from .commands import (
-    simple_setup_cmd,
     ICommandCall,
     ICommandInvocationStandard,
     CommandsRegistry,
+    simple_setup_cmd,
     CallContextGrand,
 )
 from .responder import IResponder
 from .permissions import IPermissionInfo
-from .minecraft import MinecraftInstanceEntry
 from .ranks import RanksRegistry
+from .minecraft import MinecraftInstanceEntry
 
-NAME: str = "servercmd"
+NAME: str = "serverstop"
 
 
-class CommandCallServerCmd(ICommandCall):
+class CommandCallServerStop(ICommandCall):
     __slots__ = (
         "responder",
         "call_context_grand",
-        "cmd",
         "name",
     )
 
     responder: IResponder
     call_context_grand: CallContextGrand
 
-    cmd: str
     name: str
 
     def __init__(
-        self,
-        responder: IResponder,
-        call_context_grand: CallContextGrand,
-        cmd: str,
-        name: str,
+        self, responder: IResponder, call_context_grand: CallContextGrand, name: str
     ) -> None:
         self.responder = responder
         self.call_context_grand = call_context_grand
 
-        self.cmd = cmd
         self.name = name
 
     async def call(self) -> None:
@@ -53,58 +46,39 @@ class CommandCallServerCmd(ICommandCall):
             await self.responder.respond("No such minecraft entry.")
             return
         if not entry.get_running().get():
-            await self.responder.respond("Instance is not running.")
+            await self.responder.respond("This server is not running")
             return
         if entry.get_instance_stopping().get():
-            await self.responder.respond("Instance is stopping.")
+            await self.responder.respond("This server is already stopping")
             return
-        startup_phase: int = entry.get_instance_startup_phase().get()
-        if startup_phase < 2:
-            await self.responder.respond(
-                f"Instance isn't ready yet. (startup phase: {startup_phase}, but must be 2)"
-            )
-            return
-
-        try:
-            await entry.send_command(self.cmd)
-        except Exception as e:
-            await self.responder.respond(f"Got error!\n```\n{repr(e)}\n```")
-        else:
-            await self.responder.respond("Sent command.")
+        await self.responder.respond("The server will stop soon")
+        entry.stop()
 
 
-class CommandInvocationServerCmd(ICommandInvocationStandard):
-    __slots__ = (
-        "cmd",
-        "name",
-    )
+class CommandInvocationServerStop(ICommandInvocationStandard):
+    __slots__ = ("name",)
 
-    cmd: str
     name: str
 
-    def __init__(self, cmd: str, name: str) -> None:
-        self.cmd = cmd
+    def __init__(self, name: str) -> None:
         self.name = name
 
     def make_call(
         self, responder: IResponder, call_context_grand: CallContextGrand
-    ) -> CommandCallServerCmd:
-        return CommandCallServerCmd(
-            responder=responder,
-            call_context_grand=call_context_grand,
-            cmd=self.cmd,
-            name=self.name,
+    ) -> CommandCallServerStop:
+        return CommandCallServerStop(
+            responder=responder, call_context_grand=call_context_grand, name=self.name
         )
 
     def get_default_respect_locks(self) -> bool:
         return True
 
 
-def invoke_servercmd(cmd: str, name: str) -> CommandInvocationServerCmd:
-    return CommandInvocationServerCmd(cmd=cmd, name=name)
+def invoke_serverstop(name: str) -> CommandInvocationServerStop:
+    return CommandInvocationServerStop(name=name)
 
 
-def setup_cmd_servercmd(
+def setup_cmd_serverstop(
     commands_registry: CommandsRegistry,
     ranks_registry: RanksRegistry,
     default_target: str,
@@ -112,13 +86,12 @@ def setup_cmd_servercmd(
     permission_info: IPermissionInfo = ranks_registry.get_trusted_permission_info()
 
     params: list[click.Parameter] = [
-        click.Argument(["cmd"], type=str, required=True),
         click.Option(
             ["-n", "--name"], type=str, required=False, default=default_target
         ),
     ]
     command: click.Command = click.Command(
-        name=NAME, callback=invoke_servercmd, add_help_option=False, params=params
+        name=NAME, callback=invoke_serverstop, add_help_option=False, params=params
     )
 
     simple_setup_cmd(

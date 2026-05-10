@@ -2,9 +2,8 @@ import abc
 from typing import AsyncIterator
 
 
-
 class PowerDeviceCommandResponse:
-    __slots__ = ("success", )
+    __slots__ = ("success",)
 
     success: bool
 
@@ -24,12 +23,13 @@ class PowerDeviceStatusResponse:
 
 
 class PowerDeviceConnectedResponse:
-    __slots__ = ("connected", )
+    __slots__ = ("connected",)
 
     connected: bool
-    
+
     def __init__(self, connected: bool) -> None:
         self.connected = connected
+
 
 class PowerDeviceDetails:
     __slots__ = ("turned_on", "connected")
@@ -67,6 +67,7 @@ class PowerController(abc.ABC):
         # For type checkers
         raise NotImplementedError()
         yield 0
+
     @abc.abstractmethod
     async def power_off_async_with_retries(
         self, retries: int, interval: float

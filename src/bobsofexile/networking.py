@@ -1,15 +1,15 @@
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Set, Sequence
+from collections.abc import Mapping, Sequence
 import socket
 import time
 import logging
 import json
+from typing_extensions import ReadOnly
 from typing import (
     Generic,
     Any,
     TypedDict,
     TypeVar,
-    Awaitable,
     Required,
     MutableMapping,
     Literal,
@@ -21,11 +21,17 @@ import functools
 import asyncio
 import uuid
 
-from .async_convenience import wait_while_not_cancelled
-from .main_convenience import ensure_existence_and_type
-
 import zmq
 import zmq.asyncio
+
+from .main_convenience import ensure_existence_and_type
+from .hardcoded import NETWORKING_MAX_RATE_KBPS
+from .async_convenience import (
+    coroutines_race,
+    BooleanEvent,
+    IMutableBooleanEvent,
+    IBooleanEvent,
+)
 
 T = TypeVar("T")
 
@@ -46,10 +52,10 @@ def check_is_reachable(hostname: str) -> bool:
 
 
 class NetworkingMessageDict(TypedDict):
-    code: Required[int]  # Use ReadOnly if 3.12
-    id: Required[str]  # Use ReadOnly if 3.12
-    is_reply: Required[bool]  # Use ReadOnly if 3.12
-    expiration: Required[float | int]
+    code: ReadOnly[Required[int]]
+    id: ReadOnly[Required[str]]
+    is_reply: ReadOnly[Required[bool]]
+    expiration: ReadOnly[Required[float | int]]
 
 
 class NetworkingMessage:
@@ -65,8 +71,11 @@ class NetworkingMessage:
     is_reply: bool
     expiration: float | int
 
-    def __init__(self, code: int, id: str | None, is_reply: bool, expiration: float | int) -> None:
+    def __init__(
+        self, code: int, id: str | None, is_reply: bool, expiration: float | int
+    ) -> None:
         # Most of the time, responses can just set their expiration as the request's expiration. It's not required though and isn't enforced
+
         assert (not is_reply) or (
             is_reply and code is not None
         ), "A reply cannot auto-generate IDs"
@@ -88,14 +97,17 @@ class NetworkingMessage:
                 self.KEY_CODE: self.code,
                 self.KEY_ID: self.id,
                 self.KEY_IS_REPLY: self.is_reply,
-                self.KEY_EXPIRATION: self.expiration
+                self.KEY_EXPIRATION: self.expiration,
             }
         )
 
     def is_expired(self) -> bool:
         return time.time() > self.expiration
 
-def networking_message_from_json(json_data: str | bytes | bytearray) -> "NetworkingMessage":
+
+def networking_message_from_json(
+    json_data: str | bytes | bytearray,
+) -> "NetworkingMessage":
     loaded_raw: Any = json.loads(json_data)
     loaded: Mapping[Any, Any] = ensure_existence_and_type('loaded data', Mapping, loaded_raw,                              InvalidNetworkingMessageStructureError, InvalidNetworkingMessageStructureError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
     code: int = ensure_existence_and_type('code', int, loaded.get(NetworkingMessage.KEY_CODE, None),                       InvalidNetworkingMessageStructureError, InvalidNetworkingMessageStructureError)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # fmt: skip
@@ -142,7 +154,7 @@ class NetworkingHandler:
             except InvalidNetworkingMessageStructureError:
                 logging.info("SOME message had invalid structure")
                 continue
-            
+
             if as_message.is_reply:
                 logging.info(
                     f"SOME was a reply | Code | {as_message.code} | ID | {as_message.id} | Expiration {as_message.expiration} "
@@ -166,9 +178,7 @@ class NetworkingHandler:
                     as_message.code, request_reply_context_youngest
                 )
 
-    async def request(
-        self, msg: NetworkingMessage
-    ) -> NetworkingMessage | None:
+    async def request(self, msg: NetworkingMessage) -> NetworkingMessage | None:
         reply_dispatcher_request: ReplyDispatcherRequest = ReplyDispatcherRequest(
             id=msg.id, reply_queue=asyncio.Queue()
         )
@@ -179,8 +189,7 @@ class NetworkingHandler:
         )
 
         data_to_send: SocketDataToSend[bytes] = SocketDataToSend(
-            data=msg.to_json().encode("utf-8"),
-            expiry_time=msg.expiration
+            data=msg.to_json().encode("utf-8"), expiry_time=msg.expiration
         )
         await self.sock_lazy.send(data_to_send)
         reply: NetworkingMessage | None = await self.reply_dispatcher.wait_for_reply(
@@ -190,11 +199,10 @@ class NetworkingHandler:
 
     async def reply(self, msg: NetworkingMessage) -> None:
         data_to_send: SocketDataToSend[bytes] = SocketDataToSend(
-            data=msg.to_json().encode("utf-8"),
-            expiry_time=msg.expiration
+            data=msg.to_json().encode("utf-8"), expiry_time=msg.expiration
         )
         await self.sock_lazy.send(data_to_send)
-    
+
 
 class ReplyDispatcherRequest:
     __slots__ = ("already_put_reply", "reply_queue", "id")
@@ -301,10 +309,7 @@ RequestReplyCallable: TypeAlias = Callable[
 
 
 class RequestReplier:
-    __slots__ = (
-        "code_hooks",
-        "request_reply_context_old",
-    )
+    __slots__ = ("code_hooks",)
     code_hooks: MutableMapping[
         int, tuple[RequestReplyCallable, RequestReplyContextYoung]
     ]
@@ -369,6 +374,8 @@ class RequestReplierHookAlreadyExistsError(Exception):
 
 
 class SocketDataToSend(Generic[T]):
+    # This class exists because data isn't guaranteed to be sent immediately by the lazy socket
+    # And may already be expired when its time comes
     __slots__ = ("_data", "_expiry_time")
 
     _data: T
@@ -420,6 +427,9 @@ class LazySocket(ILazySocket):
         self._maintainer_task = asyncio.Task(self.start_maintainer())
 
     async def start_maintainer(self) -> None:
+        """
+        Cancelling more than once will break the internal logic
+        """
         logging.info("Starting lazy socket maintainer")
         while True:
             one_time_sock: IOneTimeLazySocket = self.cloner.new()
@@ -428,27 +438,34 @@ class LazySocket(ILazySocket):
                     recv_queue=self._recv_queue, to_send_queue=self._to_send_queue
                 )
             except Exception as e:
-                logging.error(
-                    "Lazy socket maintainer finished with an error!", exc_info=e
-                )
+                logging.error("Lazy socket maintainer finished with an error!", exc_info=e)  # fmt: skip
+                raise
+            except asyncio.CancelledError:
+                logging.info("Lazy socket maintainer cancelled")
                 raise
 
     async def send(self, data: SocketDataToSend[bytes]) -> None:
-        logging.debug("Lazy socket putting data to send")
         if self._maintainer_task is None:
+            logging.info(
+                "Lazy socket didn't put data to send due to no maintainer exception"
+            )
             raise LazySocketNoMaintainerError
 
-        maintainer_exceptions: BaseException | None
+        maintainer_exceptions: BaseException | None = None
         try:
             maintainer_exceptions = self._maintainer_task.exception()
         except asyncio.InvalidStateError:
             # "Exception is not set."
-            maintainer_exceptions = None
+            pass
         if maintainer_exceptions is not None:
+            logging.info(
+                "Lazy socket didn't put data to send due to maintainer exception"
+            )
             # I HATE THIS, THIS IS WRONG
             # But how else am I supposed to propagate them?
             raise maintainer_exceptions
 
+        logging.debug("Lazy socket putting data to send")
         await self._to_send_queue.put(data)
 
     async def recv(self) -> bytes:
@@ -465,7 +482,7 @@ class LazySocket(ILazySocket):
             # "Exception is not set."
             maintainer_exceptions = None
         if maintainer_exceptions is not None:
-            # I HATE THIS, THIS IS WRONG
+            # TODO I HATE THIS, THIS IS WRONG
             # But how else am I supposed to propagate them?
             raise maintainer_exceptions
 
@@ -583,10 +600,10 @@ class OneTimeLazySocket(IOneTimeLazySocket):
     heartbeat_ivl: int
     heartbeat_timeout: int
 
-    _started_event: asyncio.Event
-    _connected_event: asyncio.Event
-    _bound_event: asyncio.Event
-    _disconnected_event: asyncio.Event
+    _started_event: IMutableBooleanEvent
+    _connected_event: IMutableBooleanEvent
+    _bound_event: IMutableBooleanEvent
+    _disconnected_event: IMutableBooleanEvent
 
     _sock: zmq.asyncio.Socket
     _sock_monitor: zmq.asyncio.Socket
@@ -613,10 +630,22 @@ class OneTimeLazySocket(IOneTimeLazySocket):
         self.heartbeat_ivl = heartbeat_ivl
         self.heartbeat_timeout = heartbeat_timeout
 
-        self._started_event = asyncio.Event()
-        self._connected_event = asyncio.Event()
-        self._bound_event = asyncio.Event()
-        self._disconnected_event = asyncio.Event()
+        self._started_event = BooleanEvent(
+            set_msg="Setting one-time lazy socket as started",
+            set_again_warning="Setting one-time lazy socket as started AGAIN",
+        )
+        self._connected_event = BooleanEvent(
+            set_msg="Setting one-time lazy socket as connected",
+            set_again_warning="Setting one-time lazy socket as connected AGAIN",
+        )
+        self._bound_event = BooleanEvent(
+            set_msg="Setting one-time lazy socket as bound",
+            set_again_warning="Setting one-time lazy socket as bound AGAIN",
+        )
+        self._disconnected_event = BooleanEvent(
+            set_msg="Setting one-time lazy socket as disconnected",
+            set_again_warning="Setting one-time lazy socket as disconnected AGAIN",
+        )
 
         self._sock = self.new_socket(
             zmq_context=zmq_context,
@@ -651,6 +680,10 @@ class OneTimeLazySocket(IOneTimeLazySocket):
             sock.setsockopt_string(zmq.CURVE_SERVERKEY, curve_key_server + "\0")
         sock.setsockopt(zmq.HEARTBEAT_IVL, heartbeat_ivl)
         sock.setsockopt(zmq.HEARTBEAT_TIMEOUT, heartbeat_timeout)
+        sock.setsockopt(zmq.SNDHWM, 1)
+        sock.setsockopt(zmq.IMMEDIATE, 1) # Blocks if a send is attempted before connecting
+        sock.setsockopt(zmq.LINGER, 0)
+        sock.setsockopt(zmq.RATE, NETWORKING_MAX_RATE_KBPS) # Just in case something goes horribly wrong
         return sock
         #fmt: on
 
@@ -674,272 +707,222 @@ class OneTimeLazySocket(IOneTimeLazySocket):
         to_send_queue: asyncio.Queue[SocketDataToSend[bytes]],
     ) -> None:
         """
-        Finished blocking once the socket disconnects/errors
-        Propagates errors from its the spawned tasks as an exception group
+        Finishes blocking after the socket disconnects and all internal tasks exit
+        Cancelling more than once will break the internal logic
         """
-        logging.info("Starting one-time lazy socket")
-        task_receiver: asyncio.Task[None] = asyncio.Task(
-            self.start_sock_receiver(recv_queue)
-        )
-        task_monitor: asyncio.Task[None] = asyncio.Task(self.start_sock_monitor())
-        task_sender: asyncio.Task[None] = asyncio.Task(
-            self.start_sock_sender(to_send_queue)
-        )
-        self._sock.connect(self.requesting_and_replying_url)
-        self._sock.bind(self.listening_url)
-        self.set_started()
+        errored: Exception | None = None
+        cancelled: asyncio.CancelledError | None = None
 
-        disconnected_task: asyncio.Task[Literal[None]] = asyncio.Task(self.wait_disconnected()) # fmt: skip
-        done: Set[asyncio.Task[None]]
-        pending: Set[asyncio.Task[None]]
-        done, pending = await asyncio.wait(
-            (disconnected_task, task_receiver, task_monitor, task_sender),
-            return_when=asyncio.FIRST_EXCEPTION,
-        )
+        tasks: asyncio.TaskGroup
+
+        try:
+            async with asyncio.TaskGroup() as tasks:
+                logging.info("Starting one-time lazy socket")
+                tasks.create_task(self.start_sock_monitor())
+                tasks.create_task(self.start_sock_receiver(recv_queue))
+                tasks.create_task(self._disconnected_event.wait())
+
+                self._sock.connect(self.requesting_and_replying_url)
+                self._sock.bind(self.listening_url)
+                self._started_event.set()
+
+                done: Sequence[int]
+                exceptions: BaseExceptionGroup | None
+                cancelled: asyncio.CancelledError | None
+                done, exceptions, cancelled = await coroutines_race(
+                    (self._connected_event.wait(), self._disconnected_event.wait()),
+                    cancel_everything_afterwards=True,
+                    exception_msg="Exceptions in one-time lazy socket event race",
+                )
+                # 0 - connected
+                # 1 - disconnected
+                if exceptions is not None:
+                    raise exceptions
+                if cancelled is not None:
+                    raise cancelled
+                connected: bool = 0 in done
+                disconnected: bool = 1 in done
+                assert connected or disconnected
+
+                if not disconnected and connected:
+                    tasks.create_task(self.start_sock_sender(to_send_queue))
+                    await self._disconnected_event.wait()
+                else:
+                    logging.warning("One-time lazy socket didn't begin sending because it was already disconnected") # fmt: skip
+                # The task group context manager waits until they all finish (and closes() them automatically if any of them raises an exception/cancellation)
+        except Exception as e:
+            errored = e
+            # Only a repr because higher level classes may be logging the error too (since we're re-raising it to them)
+            logging.error(f"One-time lazy socket got exception! | {repr(e)}")
+        except asyncio.CancelledError as e:
+            cancelled = e
+            logging.info("One-time lazy socket got cancelled")
 
         self._sock.close(linger=0)
         del self._sock
-
-        errors: Sequence[Exception] = []
-        for task in done:
-            try:
-                exception: BaseException | None = task.exception()
-            except asyncio.InvalidStateError:
-                # "Exception is not set."
-                continue
-            if exception is not None:
-                assert isinstance(exception, Exception), "Got exception of an unexpected type" # fmt: skip
-                errors.append(exception)
-        if errors:
-            self.set_disconnected()  # A bit hacky
-            raise ExceptionGroup(
-                "One-time lazy socket finished with exceptions", errors
-            )
-        assert not pending, "Asyncio didn't complete everything?"
+        self._sock_monitor.close(linger=0)
+        del self._sock_monitor
 
         logging.info("One-time lazy socket finished")
-
-    # DON'T FORGET TO PUT DISCONNECTED CHECKS BEFORE (most) CONTINUES
+        if errored is not None:
+            raise errored
+        if cancelled is not None:
+            raise cancelled
 
     async def start_sock_sender(
         self,
         to_send_queue: asyncio.Queue[SocketDataToSend[bytes]],
     ) -> None:
-        logging.info("One-time lazy socket sender initialized")
-        connected_task: asyncio.Task[Literal[None]] = asyncio.Task(self.wait_connected()) # fmt: skip
-        disconnected_task: asyncio.Task[Literal[None]] = asyncio.Task(self.wait_disconnected()) # fmt: skip
-        done: Set[asyncio.Task[Literal[None]]]
-        done, _ = await asyncio.wait(
-            (connected_task, disconnected_task), return_when=asyncio.FIRST_COMPLETED
-        )
-        disconnected: bool = disconnected_task in done
-        connected: bool = connected_task in done
-        if disconnected:
-            logging.warning("One-time lazy socket sender disconnected before starting")
-            return
-        if not connected:
-            assert False, "Asyncio got nothing done?"
+        """
+        Cancelling more than once will break the internal logic
+        """
+        errored: Exception | None = None
+        cancelled: asyncio.CancelledError | None = None
 
         logging.info("One-time lazy socket sender started")
         while True:
-            to_send_resulting_task: asyncio.Task[SocketDataToSend[bytes]] = (
-                asyncio.Task(to_send_queue.get())
-            )
-
-            # Inferring types due to the complex signature
-            disconnected, to_send = await wait_while_not_cancelled(
-                receive_waitable=to_send_resulting_task,
-                cancel_waitable=disconnected_task,
-                stop_receive_on_cancel=True,
-            )
-            if to_send is None:
-                if disconnected:
-                    break
-                assert False, "Asyncio got nothing done?"
+            try:
+                to_send: SocketDataToSend[bytes] = await to_send_queue.get()
+            except asyncio.CancelledError as e:
+                cancelled = e
+                logging.info("One-time lazy socket got cancelled while awaiting input")
+                break
 
             if to_send.is_expired():
                 logging.info(f"One-time lazy socket cannot send the data because it is expired | {to_send.get_expiry_time()} | {to_send.get_data()}") # fmt: skip
-                if disconnected:
-                    break
                 continue
-            if disconnected:
-                logging.info("One-time lazy socket cannot send the data because it's disconnected") # fmt: skip
-                to_send_queue.put_nowait(to_send)
-                break
-            logging.debug(f"One-time lazy socket sending data | {to_send.get_data()}")
+
+            data: bytes = to_send.get_data()
+            logging.debug(f"One-time lazy socket sending data | {data}")
             try:
-                _ = await self._sock.send(to_send.get_data())
+                _ = await self._sock.send(data)
             except Exception as e:
-                # TODO Specify error types properly
-                logging.error(
-                    f"One-time lazy socket got exception while sending | type: {type(e)} | {repr(e)}"
-                )
-                pass
+                errored = e
+                # TODO Specify exceptions
+                to_send_queue.put_nowait(to_send)
+                logging.error(f"One-time lazy socket got exception while sending (and will put back the data)") # fmt: skip
+                break
+            except asyncio.CancelledError as e:
+                cancelled = e
+                to_send_queue.put_nowait(to_send)
+                logging.info("One-time lazy socket got cancelled while sending (and will put back the data)") # fmt: skip
+                break
 
         logging.info("One-time lazy socket sender finished")
+        if errored is not None:
+            raise errored
+        if cancelled is not None:
+            raise cancelled
 
     async def start_sock_receiver(
         self,
         recv_queue: asyncio.Queue[bytes],
     ) -> None:
-        if self.get_disconnected():
-            logging.warning("One-time lazy socket receiver cannot start because the socket is already disconnected") # fmt: skip
-            return
+        """
+        Cancelling more than once will break the internal logic
+        """
+        errored: Exception | None = None
+        cancelled: asyncio.CancelledError | None = None
 
         logging.info("One-time lazy socket receiver started")
-        disconnected_task: asyncio.Task[None] = asyncio.Task(self.wait_disconnected())
         while True:
-            recv_future: Awaitable[bytes] = self._sock.recv()
-            # That's what the docstring says and their implementation returns
-            assert isinstance(recv_future, asyncio.Future), "Unexpected recv future type" # fmt: skip
-
-            # Inferring types due to the complex signature
-            disconnected, received = await wait_while_not_cancelled(
-                receive_waitable=recv_future,
-                cancel_waitable=disconnected_task,
-                stop_receive_on_cancel=True,
-            )
-            if received is None:
-                if disconnected:
-                    break
-                assert False, "Asyncio got nothing done?"
+            try:
+                received: bytes = await self._sock.recv()
+            except Exception as e:
+                errored = e
+                # TODO Specify exceptions
+                logging.error("One-time lazy socket got exception while awaiting input") # fmt: skip
+                break
+            except asyncio.CancelledError as e:
+                cancelled = e
+                logging.info("One-time lazy socket receiver got cancelled while awaiting input") # fmt: skip
+                break
 
             logging.debug(f"One-time lazy socket receiver got data | {received}")
-            await recv_queue.put(received)
-            if disconnected:
+
+            try:
+                await recv_queue.put(received)
+            except asyncio.CancelledError as e:
+                cancelled = e
+                logging.info("One-time lazy socket got cancelled while putting data in queue") # fmt: skip
+                recv_queue.put_nowait(received)
                 break
+
         logging.info("One-time lazy socket receiver finished")
+        if errored is not None:
+            raise errored
+        if cancelled is not None:
+            raise cancelled
 
     async def start_sock_monitor(self) -> None:
-        if self.get_disconnected():
-            logging.warning("One-time lazy socket monitor cannot start because the socket is already disconnected") # fmt: skip
-            return
+        """
+        Cancelling more than once will break the internal logic
+        """
+        errored: Exception | None = None
+        cancelled: asyncio.CancelledError | None = None
 
         logging.info("One-time lazy socket monitor started")
-        disconnected_task: asyncio.Task[None] = asyncio.Task(self.wait_disconnected())
         while True:
-            recv_future: Awaitable[list[bytes]] = self._sock_monitor.recv_multipart()
-            # That's what the docstring says and their implementation returns
-            assert isinstance(recv_future, asyncio.Future), "Unexpected recv future type" # fmt: skip
-
-            # Inferring types due to the complex signature
-            disconnected, received = await wait_while_not_cancelled(
-                receive_waitable=recv_future,
-                cancel_waitable=disconnected_task,
-                stop_receive_on_cancel=True,
-            )
-            if received is None:
-                if disconnected:
-                    break
-                assert False, "Asyncio got nothing done?"
+            try:
+                received: list[bytes] = await self._sock_monitor.recv_multipart()
+            except Exception as e:
+                errored = e
+                # TODO Specify exceptions
+                logging.error("One-time lazy socket monitor got an exception while awaiting input") # fmt: skip
+                break
+            except asyncio.CancelledError as e:
+                cancelled = e
+                logging.info("One-time lazy socket monitor got cancelled while awaiting input") # fmt: skip
+                break
 
             if len(received) != 2:
-                logging.error(
-                    "One-time lazy socket monitor event handler got an invalid event"
-                )
-                if disconnected:
-                    break
+                logging.warning("One-time lazy socket monitor event handler got an invalid event") # fmt: skip
                 continue
             first_frame_b: bytes = received[0]
             first_frame_b_len: int = len(first_frame_b)
             if first_frame_b_len != 6:
-                logging.error(
-                    f"One-time lazy socket monitor event invalid first frame length {first_frame_b_len=}"
-                )
-                if disconnected:
-                    break
+                logging.warning(f"One-time lazy socket monitor event invalid first frame length {first_frame_b_len=}") # fmt: skip
                 continue
             event_b: bytes = first_frame_b[:2]
             event_num: int = int.from_bytes(event_b, byteorder="little")
 
             logging.info(f"One-time lazy socket monitor got SOME event {event_num=}")
             match event_num:
+                # Match looks better here (offers no real advantage over if..else)
                 case zmq.EVENT_HANDSHAKE_SUCCEEDED:
                     logging.info("SOME event was: HANDSHAKE_SUCCEEDED")
-                    self.set_connected()
+                    self._connected_event.set()
                 case zmq.EVENT_CONNECTED:
                     logging.info("SOME event was: CONNECTED")
-                    # We don't care about this
+                    # We don't actually care about this
                 case zmq.EVENT_LISTENING:
                     logging.info("SOME event was: LISTENING")
-                    self.set_bound()
+                    self._bound_event.set()
                 case zmq.EVENT_DISCONNECTED:
                     logging.info("SOME event was: DISCONNECTED")
-                    self.set_disconnected()
+                    self._disconnected_event.set()
                 case zmq.EVENT_BIND_FAILED:
                     logging.info("SOME event was: BIND FAILED")
-                    self.set_disconnected()
-                # Currently unused
-                # case zmq.EVENT_CLOSED:
-                #     logging.info("SOME event was: CLOSED")
+                    self._disconnected_event.set()
                 case _:
-                    logging.error(
-                        f"Unexpected zmq event type received by one-time lazy socket monitor (and therefore ignored) {event_num=}"
-                    )
-            if disconnected:
-                break
+                    logging.error(f"One-time lazy socket monitor got an unexpected zmq event type (and therefore ignored) {event_num=}") # fmt: skip
+
         logging.info("One-time lazy socket monitor finished")
+        if errored is not None:
+            raise errored
+        if cancelled is not None:
+            raise cancelled
 
-    # ----
+    # ---
 
-    def set_started(self) -> None:
-        if self.get_started():
-            # Because it may result in unexpected behavior
-            logging.warning("Setting one-time lazy socket as started AGAIN")
-        else:
-            logging.info("Setting one-time lazy socket as started")
-            self._started_event.set()
+    def get_started(self) -> IBooleanEvent:
+        return self._started_event
 
-    def get_started(self) -> bool:
-        return self._started_event.is_set()
+    def get_connected(self) -> IBooleanEvent:
+        return self._connected_event
 
-    async def wait_started(self) -> None:
-        await self._started_event.wait()
+    def get_bound(self) -> IBooleanEvent:
+        return self._bound_event
 
-    # -
-
-    def set_connected(self) -> None:
-        if self.get_connected():
-            # Because it may result in unexpected behavior
-            logging.warning("Setting one-time lazy socket as connected AGAIN")
-        else:
-            logging.info("Setting one-time lazy socket as connected")
-            self._connected_event.set()
-
-    def get_connected(self) -> bool:
-        return self._connected_event.is_set()
-
-    async def wait_connected(self) -> None:
-        await self._connected_event.wait()
-
-    # -
-
-    def set_bound(self) -> None:
-        if self.get_bound():
-            # Because it may result in unexpected behavior
-            logging.warning("Setting one-time lazy socket as bound AGAIN")
-        else:
-            logging.info("Setting one-time lazy socket as bound")
-            self._bound_event.set()
-
-    def get_bound(self) -> bool:
-        return self._bound_event.is_set()
-
-    async def wait_bound(self) -> None:
-        await self._bound_event.wait()
-
-    # -
-
-    def set_disconnected(self) -> None:
-        if self.get_disconnected():
-            # Because it may result in unexpected behavior
-            logging.warning("Setting one-time lazy socket as disconnected AGAIN")
-        else:
-            logging.info("Setting one-time lazy socket as disconnected")
-            self._disconnected_event.set()
-
-    def get_disconnected(self) -> bool:
-        return self._disconnected_event.is_set()
-
-    async def wait_disconnected(self) -> None:
-        await self._disconnected_event.wait()
+    def get_disconnected(self) -> IBooleanEvent:
+        return self._disconnected_event

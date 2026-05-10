@@ -3,14 +3,11 @@ mode='client' # both
 token='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' # both
 bot_prefix='' # both
 bot_status='' # both
+default_responder_discord_channel_id='aaaaaaaaaaaaaaaaaaa' # client (for now) # used for system messages e.g. auto poweroff results
 rank_trusted_users='comma,separated,user,ids,with,no,spaces' # both
 rank_owner_users='comma,separated,user,ids,with,no,spaces' # both
-minecraft_server_executable='/somepath.sh' # client
-minecraft_server_stdout_buffer_size_bytes='1048576' # client
-minecraft_empty_check_interval_s='300' # client
-minecraft_empty_prolonged_minimum_spree=2 # client
-minecraft_host='127.0.0.1' # client
-minecraft_port='25565' # client
+idling_manager_enable='True' # client
+idling_manager_interval_seconds='360' # client
 networking_client_connect_url='tcp://someip' # client
 networking_client_bind_url='tcp://*:someport' # client
 networking_server_connect_url='tcp://someip' # server
@@ -23,3 +20,26 @@ tuya_access_id='aaaaaaaaaaaaaaaaaaaa' # server
 tuya_access_secret='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' # server
 tuya_region='aa' # server
 tuya_device_id='aaaaaaaaaaaaaaaaaaaaaa' # server
+
+# Minecraft section (all client)
+
+minecraft_instance_entries_names='InstanceEntryName'
+minecraft_commands_default_target='InstanceEntryName'
+minecraft_ram_counting_enable='True'
+minecraft_ram_max_usage_mb='10240' # For all running instances combined
+minecraft_empty_check_interval_s='300'
+
+# even if the empty monitoring is disabled for an instance, the values related to it must still be defined (even though they won't be used)
+
+# Minecraft instance entry (for InstanceEntryName)
+minecraft_instance_entry_start_executable_InstanceEntryName='/some-executable/OR/script-with-shebang-AND-that-uses-exec-(for-passing-through-signals).sh'
+minecraft_instance_entry_estimated_max_ram_usage_mb_InstanceEntryName='4096'
+minecraft_instance_entry_stdout_buffer_max_bytes_InstanceEntryName='10485760'
+minecraft_instance_entry_empty_prolonged_minimum_streak_InstanceEntryName='3'
+minecraft_instance_entry_enable_empty_monitoring_InstanceEntryName='True'
+minecraft_instance_entry_host_for_status_check_InstanceEntryName='127.0.0.1'
+minecraft_instance_entry_port_for_status_check_InstanceEntryName='25565'
+minecraft_instance_entry_stop_kill_bonus_delay_InstanceEntryName='10'
+minecraft_instance_entry_stop_on_empty_prolonged_InstanceEntryName='True'
+minecraft_instance_entry_stop_terminate_attempts_InstanceEntryName='2'
+minecraft_instance_entry_stop_terminate_interval_InstanceEntryName='25'

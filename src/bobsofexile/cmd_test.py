@@ -2,26 +2,68 @@ import logging
 
 import asyncclick as click
 
-from .calls_convenience import simple_wrap_command_call
-from .commands import CommandsRegistry, CallContext
-from .permissions import PermissionInfo
-from .ranks import RanksRegistry
-from .cmd_convenience import (
+from .commands import (
     simple_setup_cmd,
+    ICommandCall,
+    ICommandInvocationStandard,
+    CommandsRegistry,
+    CallContextGrand,
 )
-from .discord_convenience import respond_text_or_file_from_call_context as respond
+from .responder import IResponder
+from .permissions import IPermissionInfo
+from .ranks import RanksRegistry
 
 NAME: str = "test"
+
+
+class CommandCallTest(ICommandCall):
+    __slots__ = (
+        "responder",
+        "call_context_grand",
+    )
+
+    responder: IResponder
+    call_context_grand: CallContextGrand
+
+    def __init__(
+        self, responder: IResponder, call_context_grand: CallContextGrand
+    ) -> None:
+        self.responder = responder
+        self.call_context_grand = call_context_grand
+
+    async def call(self) -> None:
+        await self.responder.respond("Testing hello!")
+        logging.info("Test")
+
+
+class CommandInvocationTest(ICommandInvocationStandard):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        pass
+
+    def make_call(
+        self, responder: IResponder, call_context_grand: CallContextGrand
+    ) -> CommandCallTest:
+        return CommandCallTest(
+            responder=responder, call_context_grand=call_context_grand
+        )
+
+    def get_default_respect_locks(self) -> bool:
+        return False
+
+
+def invoke_test() -> CommandInvocationTest:
+    return CommandInvocationTest()
 
 
 def setup_cmd_test(
     commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
 ) -> None:
-    permission_info: PermissionInfo = ranks_registry.get_everyone_permission_info()
+    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
 
-    callback = click.pass_context(call_cmd_test)
     command: click.Command = click.Command(
-        name=NAME, callback=callback, add_help_option=False
+        name=NAME, callback=invoke_test, add_help_option=False
     )
 
     simple_setup_cmd(
@@ -30,14 +72,3 @@ def setup_cmd_test(
         commands_registry=commands_registry,
         permission_info=permission_info,
     )
-
-
-async def call_cmd_test_raw(call_context: CallContext) -> None:
-    await respond(call_context, "skibidi 67 67")
-    logging.info("Test")
-
-
-async def call_cmd_test(ctx: click.Context, /) -> None: ...
-
-
-call_cmd_test = simple_wrap_command_call(call_cmd_test_raw, respect_lock=False)

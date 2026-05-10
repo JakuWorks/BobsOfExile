@@ -2,27 +2,78 @@ import logging
 
 import asyncclick as click
 
-from .calls_convenience import simple_wrap_command_call
-from .commands import CommandsRegistry, CallContext
-from .permissions import PermissionInfo
-from .ranks import RanksRegistry
-from .cmd_convenience import (
-    simple_setup_cmd,
-)
-from .discord_convenience import respond_text_or_file_from_call_context as respond
 from .power_device import PowerDeviceConnectedResponse
+from .commands import (
+    simple_setup_cmd,
+    ICommandCall,
+    ICommandInvocationStandard,
+    CommandsRegistry,
+    CallContextGrand,
+)
+from .responder import IResponder
+from .permissions import IPermissionInfo
+from .ranks import RanksRegistry
 
 NAME: str = "testpowerdeviceconnection"
+
+
+class CommandCallTestPowerDeviceConnection(ICommandCall):
+    __slots__ = (
+        "responder",
+        "call_context_grand",
+    )
+
+    responder: IResponder
+    call_context_grand: CallContextGrand
+
+    def __init__(
+        self, responder: IResponder, call_context_grand: CallContextGrand
+    ) -> None:
+        self.responder = responder
+        self.call_context_grand = call_context_grand
+
+    async def call(self) -> None:
+        if self.call_context_grand.client_power_controller is None:
+            await self.responder.respond("No power controller")
+            return
+        connected: PowerDeviceConnectedResponse | None = (
+            await self.call_context_grand.client_power_controller.get_connected()
+        )
+        if connected is None:
+            await self.responder.respond("Failed to retrieve connection status")
+            return
+        await self.responder.respond(f"Connected: {connected.connected}")
+        logging.info(f"Tested device connection ({connected.connected=})")
+
+
+class CommandInvocationTestPowerDeviceConnection(ICommandInvocationStandard):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        pass
+
+    def make_call(
+        self, responder: IResponder, call_context_grand: CallContextGrand
+    ) -> CommandCallTestPowerDeviceConnection:
+        return CommandCallTestPowerDeviceConnection(
+            responder=responder, call_context_grand=call_context_grand
+        )
+
+    def get_default_respect_locks(self) -> bool:
+        return False
+
+
+def invoke_testpowerdeviceconnection() -> CommandInvocationTestPowerDeviceConnection:
+    return CommandInvocationTestPowerDeviceConnection()
 
 
 def setup_cmd_testpowerdeviceconnection(
     commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
 ) -> None:
-    permission_info: PermissionInfo = ranks_registry.get_everyone_permission_info()
+    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
 
-    callback = click.pass_context(call_cmd_testpowerdeviceconnection)
     command: click.Command = click.Command(
-        name=NAME, callback=callback, add_help_option=False
+        name=NAME, callback=invoke_testpowerdeviceconnection, add_help_option=False
     )
 
     simple_setup_cmd(
@@ -31,23 +82,3 @@ def setup_cmd_testpowerdeviceconnection(
         commands_registry=commands_registry,
         permission_info=permission_info,
     )
-
-
-async def call_cmd_testpowerdeviceconnection_raw(call_context: CallContext) -> None:
-    if call_context.grand.client_power_controller is None:
-        await respond(call_context, "No power controller")
-        return
-    connected: PowerDeviceConnectedResponse | None = await call_context.grand.client_power_controller.get_connected()
-    if connected is None:
-        await respond(call_context, "Failed to retrieve connection status")
-        return
-    await respond(call_context, f"Connected: {connected.connected}")
-    logging.info(f"Tested device connection ({connected.connected=})")
-
-
-async def call_cmd_testpowerdeviceconnection(ctx: click.Context, /) -> None: ...
-
-
-call_cmd_testpowerdeviceconnection = simple_wrap_command_call(
-    call_cmd_testpowerdeviceconnection_raw, respect_lock=False
-)

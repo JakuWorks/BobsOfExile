@@ -2,29 +2,104 @@ import logging
 
 import asyncclick as click
 
-from .calls_convenience import simple_wrap_command_call
-from .commands import CommandsRegistry, CallContext
-from .permissions import PermissionInfo
-from .ranks import RanksRegistry
-from .cmd_convenience import (
+from .commands import (
     simple_setup_cmd,
+    ICommandCall,
+    ICommandInvocationStandard,
+    CommandsRegistry,
+    CallContextGrand,
 )
-from .discord_convenience import respond_text_or_file_from_call_context as respond
+from .responder import IResponder
+from .permissions import IPermissionInfo
+from .ranks import RanksRegistry
 
 NAME: str = "testarg"
+
+
+class CommandCallTestArg(ICommandCall):
+    __slots__ = (
+        "responder",
+        "call_context_grand",
+        "testingargument",
+        "testingoption",
+    )
+
+    responder: IResponder
+    call_context_grand: CallContextGrand
+
+    testingargument: str
+    testingoption: str
+
+    def __init__(
+        self,
+        responder: IResponder,
+        call_context_grand: CallContextGrand,
+        testingargument: str,
+        testingoption: str,
+    ) -> None:
+        self.responder = responder
+        self.call_context_grand = call_context_grand
+
+        self.testingargument = testingargument
+        self.testingoption = testingoption
+
+    async def call(self) -> None:
+        msg: str = f"Testing argument: {self.testingargument}\nTesting option: {self.testingoption}" # fmt: skip
+        await self.responder.respond(msg) # fmt: skip
+        logging.info(msg)
+
+
+class CommandInvocationTestArg(ICommandInvocationStandard):
+    __slots__ = (
+        "testingargument",
+        "testingoption",
+    )
+
+    testingargument: str
+    testingoption: str
+
+    def __init__(self, testingargument: str, testingoption: str) -> None:
+        self.testingargument = testingargument
+        self.testingoption = testingoption
+
+    def make_call(
+        self, responder: IResponder, call_context_grand: CallContextGrand
+    ) -> CommandCallTestArg:
+        return CommandCallTestArg(
+            responder=responder,
+            call_context_grand=call_context_grand,
+            testingargument=self.testingargument,
+            testingoption=self.testingoption,
+        )
+
+    def get_default_respect_locks(self) -> bool:
+        return False
+
+
+def invoke_testarg(
+    testingargument: str, testingoption: str
+) -> CommandInvocationTestArg:
+    return CommandInvocationTestArg(
+        testingargument=testingargument, testingoption=testingoption
+    )
 
 
 def setup_cmd_testarg(
     commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
 ) -> None:
-    permission_info: PermissionInfo = ranks_registry.get_everyone_permission_info()
+    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
 
-    callback = click.pass_context(call_cmd_testarg)
     params: list[click.Parameter] = [
-        click.Argument(["testingargument"], type=str, required=True)
+        click.Argument(["testingargument"], type=str, required=True),
+        click.Option(
+            ["-to", "--testingoption"],
+            type=str,
+            required=False,
+            default="Default testingoption value",
+        ),
     ]
     command: click.Command = click.Command(
-        name=NAME, callback=callback, params=params, add_help_option=False
+        name=NAME, callback=invoke_testarg, add_help_option=False, params=params
     )
 
     simple_setup_cmd(
@@ -33,14 +108,3 @@ def setup_cmd_testarg(
         commands_registry=commands_registry,
         permission_info=permission_info,
     )
-
-
-async def call_cmd_testarg_raw(call_context: CallContext, testingargument: str) -> None:
-    await respond(call_context, f"skibidi, {testingargument}")
-    logging.info(f"Arg Test {testingargument}")
-
-
-async def call_cmd_testarg(ctx: click.Context, /, testingargument: str) -> None: ...
-
-
-call_cmd_testarg = simple_wrap_command_call(call_cmd_testarg_raw, respect_lock=False)

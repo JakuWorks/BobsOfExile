@@ -1,47 +1,133 @@
-import pathlib
-import logging
-
 import asyncclick as click
 
-from .hardcoded import (
-    ENV_KEY_MINECRAFT_SERVER_EXECUTABLE,
-    ENV_KEY_MINECRAFT_SERVER_STDOUT_BUFFER_SIZE_BYTES,
-    ENV_KEY_MINECRAFT_EMPTY_CHECK_INTERVAL_S,
-    ENV_KEY_MINECRAFT_EMPTY_PROLONGED_MINIMUM_SPREE,
-    ENV_KEY_MINECRAFT_HOST,
-    ENV_KEY_MINECRAFT_PORT,
-)
-
-from .main_convenience import (
-    EnvironmentVariableError,
-    get_env_or_error_path_existing,
-    get_env_or_error_int_positive,
-    get_env_or_error,
-)
-from .calls_convenience import simple_wrap_command_call
-from .commands import CommandsRegistry, CallContext
-from .permissions import PermissionInfo
-from .ranks import RanksRegistry
-from .cmd_convenience import (
+from .minecraft import MinecraftInstanceEntry, MinecraftEntryStartPreconfiguration
+from .commands import (
     simple_setup_cmd,
+    ICommandCall,
+    ICommandInvocationStandard,
+    CommandsRegistry,
+    CallContextGrand,
 )
-from .minecraft import ServerExecutableMissingError, MinecraftInstance
-from .discord_convenience import respond_text_or_file_from_call_context as respond
-
-from .cmd_poweroff import call_cmd_poweroff_raw
+from .responder import IResponder
+from .permissions import IPermissionInfo
+from .ranks import RanksRegistry
 
 NAME: str = "serverstart"
 
 
-def setup_cmd_serverstart(
-    commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
-) -> None:
-    permission_info: PermissionInfo = ranks_registry.get_everyone_permission_info()
+class CommandCallServerStart(ICommandCall):
+    __slots__ = (
+        "responder",
+        "call_context_grand",
+        "name",
+    )
 
-    callback = click.pass_context(call_cmd_serverstart)
-    params: list[click.Parameter] = []
+    responder: IResponder
+    call_context_grand: CallContextGrand
+
+    name: str
+
+    def __init__(
+        self, responder: IResponder, call_context_grand: CallContextGrand, name: str
+    ) -> None:
+        self.responder = responder
+        self.call_context_grand = call_context_grand
+        self.name = name
+
+    async def call(self) -> None:
+        if self.call_context_grand.minecraft_manager is None:
+            await self.responder.respond("There is no minecraft manager.")
+            return
+        entry: MinecraftInstanceEntry | None = (
+            self.call_context_grand.minecraft_manager.get_entry(self.name)
+        )
+        if entry is None:
+            await self.responder.respond("No such minecraft entry.")
+            return
+        if entry.get_running().get():
+            await self.responder.respond("Instance is already running.")
+            return
+        entry_preconfiguration: MinecraftEntryStartPreconfiguration | None = (
+            self.call_context_grand.minecraft_manager.get_entry_start_preconfiguration(
+                self.name
+            )
+        )
+        if entry_preconfiguration is None:
+            await self.responder.respond(
+                "There is no start preconfiguration for this entry."
+            )
+            return
+
+        entry_name: str = entry.name  # has proper case
+
+        msg_starting_server: str = (
+            "Starting server... You can `poweroff` the OS later after you're done playing."
+            "\n-# Powering off is optional because there's an automatic system for it in-place"
+        )
+
+        await self.responder.respond(msg_starting_server)
+
+        async def on_empty() -> None:
+            await self.responder.respond("Server is empty")
+
+        async def on_empty_prolonged() -> None:
+            await self.responder.respond(f"Stopping instance '{entry_name}' off due to inactivity.") # fmt: skip
+
+        async def on_exit() -> None:
+            await self.responder.respond("Server exit.")
+
+        async def on_entry_started() -> None:
+            await self.responder.respond("Entry started")
+
+        async def on_instance_stopping() -> None:
+            await self.responder.respond("Instance stopping")
+
+        await self.call_context_grand.minecraft_manager.start_entry_with_preconfiguration(
+            entry=entry,
+            preconfiguration=entry_preconfiguration,
+            on_empty_hooks=[on_empty],
+            on_empty_prolonged_hooks=[on_empty_prolonged],
+            on_entry_finish_hooks=[on_exit],
+            on_entry_started_hooks=[on_entry_started],
+            on_instance_stopping_hooks=[on_instance_stopping],
+        )
+
+
+class CommandInvocationServerStart(ICommandInvocationStandard):
+    __slots__ = ("name",)
+
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def make_call(
+        self, responder: IResponder, call_context_grand: CallContextGrand
+    ) -> CommandCallServerStart:
+        return CommandCallServerStart(
+            responder=responder, call_context_grand=call_context_grand, name=self.name
+        )
+
+    def get_default_respect_locks(self) -> bool:
+        return True
+
+
+def invoke_serverstart(name: str) -> CommandInvocationServerStart:
+    return CommandInvocationServerStart(name=name)
+
+
+def setup_cmd_serverstart(
+    commands_registry: CommandsRegistry,
+    ranks_registry: RanksRegistry,
+    default_target: str,
+) -> None:
+    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
+
+    params: list[click.Parameter] = [
+        click.Option(["-n", "--name"], type=str, required=False, default=default_target)
+    ]
     command: click.Command = click.Command(
-        name=NAME, callback=callback, params=params, add_help_option=False
+        name=NAME, callback=invoke_serverstart, add_help_option=False, params=params
     )
 
     simple_setup_cmd(
@@ -50,81 +136,3 @@ def setup_cmd_serverstart(
         commands_registry=commands_registry,
         permission_info=permission_info,
     )
-
-
-async def call_cmd_serverstart_raw(call_context: CallContext) -> None:
-    try:
-        exec_path: pathlib.Path = get_env_or_error_path_existing(
-            ENV_KEY_MINECRAFT_SERVER_EXECUTABLE
-        )
-        max_buffer_bytes: int = get_env_or_error_int_positive(
-            ENV_KEY_MINECRAFT_SERVER_STDOUT_BUFFER_SIZE_BYTES
-        )
-        empty_check_interval_s: int = get_env_or_error_int_positive(
-            ENV_KEY_MINECRAFT_EMPTY_CHECK_INTERVAL_S
-        )
-        empty_prolonged_minimum_spree: int = get_env_or_error_int_positive(
-            ENV_KEY_MINECRAFT_EMPTY_PROLONGED_MINIMUM_SPREE
-        )
-        server_host: str = get_env_or_error(ENV_KEY_MINECRAFT_HOST)
-        server_port: int = get_env_or_error_int_positive(ENV_KEY_MINECRAFT_PORT)
-    except EnvironmentVariableError as e:
-        await respond(call_context, str(e))
-        return
-
-    async def on_exit() -> None:
-        call_context.grand.server_instance = None
-        await respond(call_context, "Server exit.")
-
-    async def on_empty() -> None:
-        await respond(call_context, "Server is empty")
-
-    async def on_empty_prolonged() -> None:
-        await respond(call_context, "Powering off due to inactivity.")
-        # call_context.young.respect_command_lock = False # Unnecessary because raw bypasses lock anyway
-        await call_cmd_poweroff_raw(call_context=call_context)
-        # call_context.young.respect_command_lock = True
-
-    msg_starting_server: str = (
-        "Starting server... You can `poweroff` the OS later after you're done playing."
-        "\n-# Powering off is optional because there's an automatic system for it in-place"
-    )
-    await respond(call_context, msg_starting_server)
-
-    try:
-        call_context.grand.server_instance = MinecraftInstance(
-            start_executable=pathlib.Path(exec_path),
-            stdout_max_bytes=max_buffer_bytes,
-            on_exit_async=on_exit,
-            on_empty_async=on_empty,
-            on_empty_prolonged_async=on_empty_prolonged,
-            empty_check_interval_s=empty_check_interval_s,
-            empty_prolonged_minimum_spree=empty_prolonged_minimum_spree,
-            server_host=server_host,
-            server_port=server_port,
-        )
-    except ServerExecutableMissingError:
-        await respond(call_context, "The server executable is missing")
-        await on_exit()
-        return
-    except Exception as e:
-        logging.error(e)
-        await respond(call_context, "An unknown error was raised and has been logged")
-        await on_exit()
-        return
-
-    try:
-        await call_context.grand.server_instance.start()
-    except Exception as e:
-        logging.error(e)
-        await respond(call_context, "An unknown error was raised and has been logged")
-        await on_exit()
-        return
-
-
-async def call_cmd_serverstart(ctx: click.Context, /) -> None: ...
-
-
-call_cmd_serverstart = simple_wrap_command_call(
-    call_cmd_serverstart_raw, respect_lock=True
-)

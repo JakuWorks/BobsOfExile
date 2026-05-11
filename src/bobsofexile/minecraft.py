@@ -11,7 +11,7 @@ import asyncio
 import mcstatus
 import mcstatus.responses
 
-from .subprocess_convenience import terminate_and_kill_process
+from .subprocess_convenience import terminate_and_kill_process_group_and_wait_for_process
 from .hardcoded import (
     MINECRAFT_STDOUT_PER_READ_MAX_BYTES,
     MINECRAFT_STATUS_CHECK_TIMEOUT_SECONDS,
@@ -188,6 +188,7 @@ class OneTimeMinecraftInstance:
                 stderr=asyncio.subprocess.STDOUT,
                 text=False,
                 bufsize=0,
+                start_new_session=True
             )
         )
         logging.info(f"Created a process for the one-time minecraft instance | {process.pid}")
@@ -466,7 +467,7 @@ class OneTimeMinecraftInstance:
         stop_terminate_attempts: int = self._get_stop_terminate_attempts()
         stop_terminate_interval: float = self._get_stop_terminate_interval()
 
-        await terminate_and_kill_process(
+        await terminate_and_kill_process_group_and_wait_for_process(
             process=process,
             kill_bonus_delay=stop_kill_bonus_delay,
             terminate_attempts=stop_terminate_attempts,

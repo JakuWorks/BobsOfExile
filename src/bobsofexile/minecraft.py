@@ -11,7 +11,9 @@ import asyncio
 import mcstatus
 import mcstatus.responses
 
-from .subprocess_convenience import terminate_and_kill_process_group_and_wait_for_process
+from .subprocess_convenience import (
+    terminate_and_kill_process_group_and_wait_for_process,
+)
 from .hardcoded import (
     MINECRAFT_STDOUT_PER_READ_MAX_BYTES,
     MINECRAFT_STATUS_CHECK_TIMEOUT_SECONDS,
@@ -139,7 +141,9 @@ class OneTimeMinecraftInstance:
         self.start_executable = start_executable
         # -
 
-        log_setting_format: str = "Setting one-time minecraft instance startup phase as {}"
+        log_setting_format: str = (
+            "Setting one-time minecraft instance startup phase as {}"
+        )
         self._startup_phase = PhaseNumber(
             max_phase=3, log_setting_format=log_setting_format
         )
@@ -188,10 +192,12 @@ class OneTimeMinecraftInstance:
                 stderr=asyncio.subprocess.STDOUT,
                 text=False,
                 bufsize=0,
-                start_new_session=True
+                start_new_session=True,
             )
         )
-        logging.info(f"Created a process for the one-time minecraft instance | {process.pid}")
+        logging.info(
+            f"Created a process for the one-time minecraft instance | {process.pid}"
+        )
         # TODO: Is it safe to just kill it here?
         # I'll keep it for now because I think that it's safe to do as long as it's extremely early in the starting process
         # Hopefully...
@@ -267,7 +273,6 @@ class OneTimeMinecraftInstance:
                     msg_log_error="One-time minecraft instance got an error while running a stopping hook",
                     msg_log_cancelled="Contract violation in one-time minecraft instance",  # Silly but why not log it here if it's so easy to do anyway
                 )
-
 
         cwd: pathlib.Path = self.start_executable.parent
         try:
@@ -1272,8 +1277,12 @@ class MinecraftManager:
 
         logging.info(f"Minecraft manager starting entry {entry.name=}")
 
-        running_wait_t: asyncio.Task[Any] = asyncio.create_task(entry.get_running().wait())
-        startup_phase_2_wait_t: asyncio.Task[Any] = asyncio.create_task(entry.wait_instance_startup_phase(2))
+        running_wait_t: asyncio.Task[Any] = asyncio.create_task(
+            entry.get_running().wait()
+        )
+        startup_phase_2_wait_t: asyncio.Task[Any] = asyncio.create_task(
+            entry.wait_instance_startup_phase(2)
+        )
 
         # The entry saves the task as one of its attributes so we don't need to do it again here
         entry.start_as_task(

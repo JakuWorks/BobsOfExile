@@ -5,6 +5,7 @@ import signal
 
 import asyncio.subprocess
 
+
 async def terminate_and_kill_process_group_and_wait_for_process(
     process: asyncio.subprocess.Process,
     terminate_attempts: int,
@@ -13,7 +14,7 @@ async def terminate_and_kill_process_group_and_wait_for_process(
 ) -> None:
     """
     Acts upon the process group of the process
-    Will fail and wait forever if the process exits the process group 
+    Will fail and wait forever if the process exits the process group
     """
     for attempt in range(1, terminate_attempts + 1):
         logging.info(f"Attempting to terminate process | {process.pid=} | {attempt=}")
@@ -25,7 +26,9 @@ async def terminate_and_kill_process_group_and_wait_for_process(
         except TimeoutError:
             logging.debug("Process termination timed out, will try again")
         else:
-            logging.info(f"Process termination successful | {process.pid=} | {return_code=}")
+            logging.info(
+                f"Process termination successful | {process.pid=} | {return_code=}"
+            )
             return
 
     await asyncio.sleep(kill_bonus_delay)
@@ -34,4 +37,3 @@ async def terminate_and_kill_process_group_and_wait_for_process(
     # process.kill()
     kill_return_code: int = await process.wait()
     logging.info(f"Process killing successful | {process.pid=} | {kill_return_code=}")
-

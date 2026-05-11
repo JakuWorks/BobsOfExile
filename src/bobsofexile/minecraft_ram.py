@@ -56,7 +56,9 @@ class MinecraftRamCounterStandard(IMinecraftRamCounter):
         return self.current - bytes_count >= 0
 
     def deallocate(self, bytes_count: int) -> None:
-        logging.debug(f"Ram counter deallocating | {bytes_count=:e} | {self.current=:e}")
+        logging.debug(
+            f"Ram counter deallocating | {bytes_count=:e} | {self.current=:e}"
+        )
         new_current: int = self.current - bytes_count
         if new_current < 0:
             raise MinecraftRamCounterCannotDeallocateError(f"Goes below zero {bytes_count=:e}, {self.current=:e}, {self.max_bytes=:e}") # fmt: skip

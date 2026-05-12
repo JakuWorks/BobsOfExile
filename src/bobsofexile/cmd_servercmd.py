@@ -50,27 +50,26 @@ class CommandCallServerCmd(ICommandCall):
             self.call_context_grand.minecraft_manager.get_entry(self.name)
         )
         if entry is None:
-            await self.responder.respond("No such minecraft entry.")
+            await self.responder.respond(f"No such minecraft entry. ({self.name})")
             return
+        entry_name: str = entry.name
         if not entry.get_running().get():
-            await self.responder.respond("Instance is not running.")
+            await self.responder.respond(f"Instance is not running. ({entry_name})")
             return
         if entry.get_instance_stopping().get():
-            await self.responder.respond("Instance is stopping.")
+            await self.responder.respond(f"Instance is stopping. ({entry_name})")
             return
         startup_phase: int = entry.get_instance_startup_phase().get()
         if startup_phase < 2:
-            await self.responder.respond(
-                f"Instance isn't ready yet. (startup phase: {startup_phase}, but must be 2)"
-            )
+            await self.responder.respond(f"Instance isn't ready yet. (startup phase: {startup_phase}, but must be 2). ({entry_name})") # fmt: skip
             return
 
         try:
             await entry.send_command(self.cmd)
         except Exception as e:
-            await self.responder.respond(f"Got error!\n```\n{repr(e)}\n```")
+            await self.responder.respond(f"Got error ({entry_name})!\n```\n{repr(e)}\n```")
         else:
-            await self.responder.respond("Sent command.")
+            await self.responder.respond(f"Sent command. ({entry_name})")
 
 
 class CommandInvocationServerCmd(ICommandInvocationStandard):

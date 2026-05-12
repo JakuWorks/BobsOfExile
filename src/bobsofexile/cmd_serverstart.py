@@ -42,10 +42,11 @@ class CommandCallServerStart(ICommandCall):
             self.call_context_grand.minecraft_manager.get_entry(self.name)
         )
         if entry is None:
-            await self.responder.respond("No such minecraft entry.")
+            await self.responder.respond(f"No such minecraft entry. ({self.name})")
             return
+        entry_name: str = entry.name
         if entry.get_running().get():
-            await self.responder.respond("Instance is already running.")
+            await self.responder.respond(f"Instance is already running. ({entry_name})")
             return
         entry_preconfiguration: MinecraftEntryStartPreconfiguration | None = (
             self.call_context_grand.minecraft_manager.get_entry_start_preconfiguration(
@@ -53,34 +54,30 @@ class CommandCallServerStart(ICommandCall):
             )
         )
         if entry_preconfiguration is None:
-            await self.responder.respond(
-                "There is no start preconfiguration for this entry."
-            )
+            await self.responder.respond(f"There is no start preconfiguration for this entry. ({entry_name})") # fmt: skip
             return
 
-        entry_name: str = entry.name  # has proper case
-
         msg_starting_server: str = (
-            "Starting server... You can `poweroff` the OS later after you're done playing."
+            f"Starting server ({entry_name})... You can `poweroff` the OS later after you're done playing."
             "\n-# Powering off is optional because there's an automatic system for it in-place"
         )
 
         await self.responder.respond(msg_starting_server)
 
         async def on_empty() -> None:
-            await self.responder.respond("Server is empty")
+            await self.responder.respond(f"Server is empty. ({entry_name})")
 
         async def on_empty_prolonged() -> None:
-            await self.responder.respond(f"Stopping instance '{entry_name}' off due to inactivity.") # fmt: skip
+            await self.responder.respond(f"Stopping instance due to inactivity. ({entry_name})") # fmt: skip
 
         async def on_exit() -> None:
-            await self.responder.respond("Server exit.")
+            await self.responder.respond(f"Server exit. ({entry_name})")
 
         async def on_entry_started() -> None:
-            await self.responder.respond("Entry started")
+            await self.responder.respond(f"Entry started.")
 
         async def on_instance_stopping() -> None:
-            await self.responder.respond("Instance stopping")
+            await self.responder.respond(f"Instance stopping. ({entry_name})")
 
         await self.call_context_grand.minecraft_manager.start_entry_with_preconfiguration(
             entry=entry,

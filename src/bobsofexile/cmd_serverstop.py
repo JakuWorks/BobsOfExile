@@ -43,15 +43,16 @@ class CommandCallServerStop(ICommandCall):
             self.call_context_grand.minecraft_manager.get_entry(self.name)
         )
         if entry is None:
-            await self.responder.respond("No such minecraft entry.")
+            await self.responder.respond(f"No such minecraft entry. ({self.name})")
             return
+        entry_name: str = entry.name
         if not entry.get_running().get():
-            await self.responder.respond("This server is not running")
+            await self.responder.respond(f"This server is not running. ({entry_name})")
             return
         if entry.get_instance_stopping().get():
-            await self.responder.respond("This server is already stopping")
+            await self.responder.respond(f"This server is already stopping. ({entry_name})")
             return
-        await self.responder.respond("The server will stop soon")
+        await self.responder.respond(f"The server will stop soon. ({entry_name})")
         entry.stop()
 
 

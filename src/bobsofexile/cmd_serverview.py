@@ -56,8 +56,11 @@ class CommandCallServerView(ICommandCall):
             self.call_context_grand.minecraft_manager.get_entry(self.name)
         )
         if entry is None:
-            await self.responder.respond("No such minecraft entry.")
+            await self.responder.respond(f"No such minecraft entry. {self.name}")
             return
+        entry_name: str = entry.name
+
+        await self.responder.respond(f"Selected '{entry_name}'")
 
         # The buffer is cleared only when starting a new instance
         stdout: bytes = bytes(entry.get_stdout_buffer())

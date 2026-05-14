@@ -506,7 +506,7 @@ class OneTimeMinecraftInstance:
                 await status_checker.async_status()
             )
         except ConnectionRefusedError:
-            logging.debug("One-time minecraft instance got connection refused on status check") # fmt: skip
+            logging.warning("One-time minecraft instance got connection refused on status check") # fmt: skip
             return MinecraftStatusFailReason.CONNECTION_REFUSED
         return status
 
@@ -1379,10 +1379,11 @@ class MinecraftManager:
                 for entry in self.entries_by_name.values():
                     if not entry.get_running().get():
                         continue
+                    entry_name: str = entry.name
                     try:
                         enable_empty_monitoring: bool = entry.get_enable_empty_monitoring()
                     except OneTimeMinecraftInstanceInvalidStateError as e:
-                        logging.debug(f"Minecraft manager emptiness monitor getting enable empty monitoring failed with invalid state error ({repr(e)})")
+                        logging.error(f"Minecraft manager emptiness monitor getting enable empty monitoring failed with invalid state error ({repr(e)}) ({entry_name=})")
                         continue
 
                     if not enable_empty_monitoring:
@@ -1392,30 +1393,32 @@ class MinecraftManager:
                     try:
                         status = await entry.get_status()
                     except OneTimeMinecraftInstanceInvalidStateError as e:
-                        logging.debug(f"Minecraft manager emptiness monitor getting status failed with invalid state error ({repr(e)})")
+                        logging.error(f"Minecraft manager emptiness monitor getting status failed with invalid state error ({repr(e)}) ({entry_name=})")
                         continue
 
                     if isinstance(status, MinecraftStatusFailReason):
-                        logging.error(f"Minecraft manager emptiness monitor getting instance status failed with reason: {MinecraftStatusFailReason}")
+                        logging.error(f"Minecraft manager emptiness monitor getting instance status failed with reason: {status} ({entry_name=})")
                         continue
 
                     players: int = status.players.online
+                    logging.debug(f"Minecraft manager emptiness monitor got {players} players ({entry_name=})")
                     if players == 0:
                         try:
+
                             await self._notify_entry_not_empty(entry)
                         except MinecraftInstanceEntryInvalidStateError as e:
                             # In case getting the status took a long time
-                            logging.debug(f"Minecraft manager emptiness monitor notifying not empty got invalid state error ({repr(e)})") 
+                            logging.error(f"Minecraft manager emptiness monitor notifying not empty got invalid state error ({repr(e)}) ({entry_name=})") 
                         except Exception as e:
-                            logging.debug(f"Minecraft manager emptiness monitor notifying not empty failed ({repr(e)})") 
+                            logging.error(f"Minecraft manager emptiness monitor notifying not empty failed ({repr(e)}) ({entry_name=})") 
                     else:
                         try:
                             await self._notify_entry_empty(entry)
                         except MinecraftInstanceEntryInvalidStateError as e:
                             # In case getting the status took a long time
-                            logging.debug(f"Minecraft manager emptiness monitor notifying not empty got invalid state error ({repr(e)})") 
+                            logging.error(f"Minecraft manager emptiness monitor notifying not empty got invalid state error ({repr(e)}) ({entry_name=})") 
                         except Exception as e:
-                            logging.debug(f"Minecraft manager emptiness monitor notifying empty failed ({repr(e)})") 
+                            logging.error(f"Minecraft manager emptiness monitor notifying empty failed ({repr(e)}) ({entry_name=})") 
 
                 await asyncio.sleep(self.empty_check_interval_s)
             except asyncio.CancelledError as e:

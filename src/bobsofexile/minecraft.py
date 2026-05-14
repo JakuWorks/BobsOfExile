@@ -17,6 +17,7 @@ from .subprocess_convenience import (
 from .hardcoded import (
     MINECRAFT_STDOUT_PER_READ_MAX_BYTES,
     MINECRAFT_STATUS_CHECK_TIMEOUT_SECONDS,
+    MINECRAFT_EMPTINESS_MONITOR_STATUS_TIMEOUT_S,
 )
 from .async_convenience import (
     cancel_task_only_once_if_not_done,
@@ -1391,9 +1392,13 @@ class MinecraftManager:
                     
                     status: mcstatus.responses.JavaStatusResponse | MinecraftStatusFailReason
                     try:
-                        status = await entry.get_status()
+                        async with asyncio.timeout(delay=MINECRAFT_EMPTINESS_MONITOR_STATUS_TIMEOUT_S):
+                            status = await entry.get_status()
                     except OneTimeMinecraftInstanceInvalidStateError as e:
                         logging.error(f"Minecraft manager emptiness monitor getting status failed with invalid state error ({repr(e)}) ({entry_name=})")
+                        continue
+                    except TimeoutError:
+                        logging.warning(f"Minecraft manager emptiness monitor getting status timed out ({entry_name=})")
                         continue
 
                     if isinstance(status, MinecraftStatusFailReason):
@@ -1404,7 +1409,6 @@ class MinecraftManager:
                     logging.debug(f"Minecraft manager emptiness monitor got {players} players ({entry_name=})")
                     if players == 0:
                         try:
-
                             await self._notify_entry_not_empty(entry)
                         except MinecraftInstanceEntryInvalidStateError as e:
                             # In case getting the status took a long time

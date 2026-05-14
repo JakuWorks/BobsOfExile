@@ -19,6 +19,7 @@ from .cmd_testpermissions import setup_cmd_testpermissions
 from .cmd_teststream import setup_cmd_teststream
 from .cmd_testping import setup_cmd_testping
 
+from .async_convenience import wrap_error_logging
 from .ranks import RanksRegistry
 from .commands import CommandsRegistry, CallContextGrand
 from .ranks import RanksRegistry, owners_from_environment, trusted_from_environment
@@ -182,7 +183,14 @@ async def main_client() -> None:
         ram_counter=minecraft_ram_counter,
         empty_check_interval_s=minecraft_empty_check_interval_s,
     )
-    main_tasks.append(asyncio.create_task(minecraft_manager.start()))
+    main_tasks.append(
+        asyncio.create_task(
+            wrap_error_logging(
+                minecraft_manager.start(),
+                on_error_msg="Minecraft manager emptiness monitor finished with an error",
+            )
+        )
+    )
 
     minecraft_env_configs: Sequence[MinecraftEntryConfigFromEnv] = (
         collect_minecraft_entry_configs_from_env()

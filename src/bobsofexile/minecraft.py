@@ -1381,6 +1381,7 @@ class MinecraftManager:
                     if not entry.get_running().get():
                         continue
                     entry_name: str = entry.name
+                    logging.debug(f"Minecraft manager emptiness monitor checking status for entry | {entry_name}")
                     try:
                         enable_empty_monitoring: bool = entry.get_enable_empty_monitoring()
                     except OneTimeMinecraftInstanceInvalidStateError as e:

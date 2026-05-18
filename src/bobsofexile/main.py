@@ -139,7 +139,7 @@ async def main_client() -> None:
     # fmt: on
 
     # For tasks created directly in main (so they don't get GCd)
-    main_tasks: MutableSequence[asyncio.Task[None]] = []
+    tasks_in_main: MutableSequence[asyncio.Task[None]] = []
 
     zmq_context: zmq.asyncio.Context = zmq.asyncio.Context()
     reply_dispatcher: ReplyDispatcher = ReplyDispatcher()
@@ -183,7 +183,7 @@ async def main_client() -> None:
         ram_counter=minecraft_ram_counter,
         empty_check_interval_s=minecraft_empty_check_interval_s,
     )
-    main_tasks.append(
+    tasks_in_main.append(
         asyncio.create_task(
             wrap_error_logging(
                 minecraft_manager.start(),
@@ -279,7 +279,7 @@ async def main_client() -> None:
             minecraft_manager=minecraft_manager,
             call_context_grand=call_context_grand,
         )
-        main_tasks.append(asyncio.create_task(idling_manager.start()))
+        tasks_in_main.append(asyncio.create_task(idling_manager.start()))
 
     await bot_task
 

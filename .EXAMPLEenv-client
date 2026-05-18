@@ -23,7 +23,7 @@ tuya_device_id='aaaaaaaaaaaaaaaaaaaaaa' # server
 
 # Minecraft section (all client)
 
-minecraft_instance_entries_names='InstanceEntryName'
+minecraft_instance_entries_names='InstanceEntryName,NoSpacesAllowed,OtherInstanceEntryName,EtCetera'
 minecraft_commands_default_target='InstanceEntryName'
 minecraft_ram_counting_enable='True'
 minecraft_ram_max_usage_mb='10240' # For all running instances combined
@@ -37,8 +37,11 @@ minecraft_instance_entry_estimated_max_ram_usage_mb_InstanceEntryName='4096'
 minecraft_instance_entry_stdout_buffer_max_bytes_InstanceEntryName='10485760'
 minecraft_instance_entry_empty_prolonged_minimum_streak_InstanceEntryName='3'
 minecraft_instance_entry_enable_empty_monitoring_InstanceEntryName='True'
-minecraft_instance_entry_host_for_status_check_InstanceEntryName='127.0.0.1'
-minecraft_instance_entry_port_for_status_check_InstanceEntryName='25565'
+minecraft_instance_entry_status_check_host_InstanceEntryName='127.0.0.1'
+minecraft_instance_entry_status_check_port_InstanceEntryName='25565'
+# Protocol versions must be taken from the table at: https://minecraft.wiki/w/Protocol_version#List_of_protocol_versions.
+# A protocol version of -1 means legacy (pre-1.7)
+minecraft_instance_entry_status_check_protocol_version_InstanceEntryName='340' 
 minecraft_instance_entry_stop_kill_bonus_delay_InstanceEntryName='10'
 minecraft_instance_entry_stop_on_empty_prolonged_InstanceEntryName='True'
 minecraft_instance_entry_stop_terminate_attempts_InstanceEntryName='2'

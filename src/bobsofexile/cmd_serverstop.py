@@ -50,7 +50,9 @@ class CommandCallServerStop(ICommandCall):
             await self.responder.respond(f"This server is not running. ({entry_name})")
             return
         if entry.get_instance_stopping().get():
-            await self.responder.respond(f"This server is already stopping. ({entry_name})")
+            await self.responder.respond(
+                f"This server is already stopping. ({entry_name})"
+            )
             return
         await self.responder.respond(f"The server will stop soon. ({entry_name})")
         entry.stop()

@@ -10,6 +10,7 @@ from .main_convenience import (
     IncorrectEnvironmentVariableError,
     get_env_or_error_float_positive,
     get_env_or_error_bool,
+    get_env_or_error_int,
 )
 import logging
 
@@ -20,8 +21,9 @@ from .hardcoded import (
     ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_EMPTY_PROLONGED_MINIMUM_STREAK,
     ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_ENABLE_EMPTY_MONITORING,
     ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_ESTIMATED_MAX_RAM_USAGE_MB,
-    ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_HOST_FOR_STATUS_CHECK,
-    ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_PORT_FOR_STATUS_CHECK,
+    ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_STATUS_CHECK_HOST,
+    ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_STATUS_CHECK_PORT,
+    ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_STATUS_CHECK_PROTOCOL_VERSION,
     ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_START_EXECUTABLE,
     ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_STDOUT_BUFFER_MAX_BYTES,
     ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_STOP_KILL_BONUS_DELAY,
@@ -39,8 +41,9 @@ class MinecraftEntryConfigFromEnv(TypedDict):
     stdout_buffer_max_bytes: ReadOnly[Required[int]]
     empty_prolonged_minimum_streak: ReadOnly[Required[int]]
     enable_empty_monitoring: ReadOnly[Required[bool]]
-    host_for_status_check: ReadOnly[Required[str]]
-    port_for_status_check: ReadOnly[Required[int]]
+    status_check_host: ReadOnly[Required[str]]
+    status_check_port: ReadOnly[Required[int]]
+    status_check_protocol_version: ReadOnly[Required[int]]
     stop_kill_bonus_delay: ReadOnly[Required[float]]
     stop_on_empty_prolonged: ReadOnly[Required[bool]]
     stop_terminate_attempts: ReadOnly[Required[int]]
@@ -63,6 +66,17 @@ def get_minecraft_entry_env_config_bool(
         logging.warning(missing_format.format(key))
     except IncorrectEnvironmentVariableError:
         logging.warning(wrong_type_format.format(key, "a boolean"))
+
+
+def get_minecraft_entry_env_config_int(
+    key: str, missing_format: str, wrong_type_format: str
+) -> int | None:
+    try:
+        return get_env_or_error_int(key)
+    except MissingEnvironmentVariableError:
+        logging.warning(missing_format.format(key))
+    except IncorrectEnvironmentVariableError:
+        logging.warning(wrong_type_format.format(key, "an int"))
 
 
 def get_minecraft_entry_env_config_int_positive(
@@ -123,10 +137,12 @@ def collect_minecraft_entry_config_from_env(
     all_values.append(empty_prolonged_minimum_streak)
     enable_empty_monitoring: bool | None = get_minecraft_entry_env_config_bool(ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_ENABLE_EMPTY_MONITORING + name, missing_format, wrong_type_format)
     all_values.append(enable_empty_monitoring)
-    host_for_status_check: str | None = get_minecraft_entry_env_config_str(ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_HOST_FOR_STATUS_CHECK + name, missing_format)
-    all_values.append(host_for_status_check)
-    port_for_status_check: int | None = get_minecraft_entry_env_config_int_positive(ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_PORT_FOR_STATUS_CHECK + name, missing_format, wrong_type_format)
-    all_values.append(port_for_status_check)
+    status_check_host: str | None = get_minecraft_entry_env_config_str(ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_STATUS_CHECK_HOST + name, missing_format)
+    all_values.append(status_check_host)
+    status_check_port: int | None = get_minecraft_entry_env_config_int_positive(ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_STATUS_CHECK_PORT + name, missing_format, wrong_type_format)
+    all_values.append(status_check_port)
+    status_check_protocol_version: int | None = get_minecraft_entry_env_config_int(ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_STATUS_CHECK_PROTOCOL_VERSION + name, missing_format, wrong_type_format)
+    all_values.append(status_check_protocol_version)
     stop_kill_bonus_delay: float | None = get_minecraft_entry_env_config_float_positive(ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_STOP_KILL_BONUS_DELAY + name, missing_format, wrong_type_format)
     all_values.append(stop_kill_bonus_delay)
     stop_on_empty_prolonged: bool | None = get_minecraft_entry_env_config_bool(ENV_KEY_MINECRAFT_INSTANCE_ENTRY_PREFIX_STOP_ON_EMPTY_PROLONGED + name, missing_format, wrong_type_format)
@@ -148,8 +164,9 @@ def collect_minecraft_entry_config_from_env(
     assert stdout_buffer_max_bytes is not None
     assert empty_prolonged_minimum_streak is not None
     assert enable_empty_monitoring is not None
-    assert host_for_status_check is not None
-    assert port_for_status_check is not None
+    assert status_check_host is not None
+    assert status_check_port is not None
+    assert status_check_protocol_version is not None
     assert stop_kill_bonus_delay is not None
     assert stop_on_empty_prolonged is not None
     assert stop_terminate_attempts is not None
@@ -160,8 +177,9 @@ def collect_minecraft_entry_config_from_env(
         start_executable=start_executable,
         estimated_max_ram_usage_mb=estimated_max_ram_usage_mb,
         stdout_buffer_max_bytes=stdout_buffer_max_bytes,
-        host_for_status_check=host_for_status_check,
-        port_for_status_check=port_for_status_check,
+        status_check_host=status_check_host,
+        status_check_port=status_check_port,
+        status_check_protocol_version=status_check_protocol_version,
         empty_prolonged_minimum_streak=empty_prolonged_minimum_streak,
         stop_terminate_attempts=stop_terminate_attempts,
         stop_terminate_interval=stop_terminate_interval,

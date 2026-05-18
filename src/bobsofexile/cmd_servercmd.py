@@ -67,7 +67,9 @@ class CommandCallServerCmd(ICommandCall):
         try:
             await entry.send_command(self.cmd)
         except Exception as e:
-            await self.responder.respond(f"Got error ({entry_name})!\n```\n{repr(e)}\n```")
+            await self.responder.respond(
+                f"Got error ({entry_name})!\n```\n{repr(e)}\n```"
+            )
         else:
             await self.responder.respond(f"Sent command. ({entry_name})")
 

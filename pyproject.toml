@@ -1,7 +1,7 @@
 [project]
 name = "bobsofexile"
 description = "TODO"
-version = "6.0.1"
+version = "7.0.0"
 requires-python = ">=3.11.15"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -14,7 +14,7 @@ dependencies=[
     'pyzmq>=27.1.0,<28',
     'tinytuya>=1.17.6,<2',
     'pycryptodome>=3.23.0,<4',
-    'mcstatus>=13.0.1,<14'
+    'mcstatus>=12.2.1,<13'
 ]
 license = "MIT"
 license-files = ["LICEN[CS]E*"]

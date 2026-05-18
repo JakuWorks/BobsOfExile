@@ -1,8 +1,7 @@
 from typing import Any, Coroutine, Callable, Iterable, Set, TypedDict, Required
 from typing_extensions import ReadOnly
-import enum
 from collections import deque
-from collections.abc import Set, MutableMapping, Sequence
+from collections.abc import Set, MutableMapping, Sequence, MutableSequence
 import logging
 import pathlib
 import asyncio.subprocess
@@ -17,7 +16,11 @@ from .subprocess_convenience import (
 from .hardcoded import (
     MINECRAFT_STDOUT_PER_READ_MAX_BYTES,
     MINECRAFT_STATUS_CHECK_TIMEOUT_SECONDS,
+    MINECRAFT_STATUS_CHECK_PROTOCOL_MAGIC_VERSION_VALUE_LEGACY,
+    MINECRAFT_STATUS_CHECK_TRIES,
     MINECRAFT_EMPTINESS_MONITOR_STATUS_TIMEOUT_S,
+    MINECRAFT_EMPTINESS_MONITOR_NOTIFY_EMPTY_TIMEOUT_S,
+    MINECRAFT_EMPTINESS_MONITOR_NOTIFY_NOT_EMPTY_TIMEOUT_S,
 )
 from .async_convenience import (
     cancel_task_only_once_if_not_done,
@@ -40,10 +43,6 @@ from .minecraft_convenience import MinecraftEntryConfigFromEnv
 from .minecraft_ram import IMinecraftRamCounter, IReadableMinecraftRamCounter
 
 # TODO Add public named constants for startup phases and use them everywhere instead
-
-
-class MinecraftStatusFailReason(enum.Enum):
-    CONNECTION_REFUSED = enum.auto()
 
 
 class OneTimeMinecraftInstanceError(Exception): # fmt: skip
@@ -77,14 +76,14 @@ class OneTimeMinecraftInstance:
         "_stdout_buffer",
         "_empty_prolonged_minimum_streak",
         "_enable_empty_monitoring",
-        "_host_for_status_check",
-        "_port_for_status_check",
+        "_status_check_host",
+        "_status_check_port",
+        "_status_check_protocol_version",
         "_stop_kill_bonus_delay",
         "_stop_on_empty_prolonged",
         "_stop_terminate_attempts",
         "_stop_terminate_interval",
         "_process",
-        "_status_checker",
         "_stdin_pipe",
         "_stdin_queue",
         "_stdout_pipe",
@@ -111,8 +110,9 @@ class OneTimeMinecraftInstance:
 
     _empty_prolonged_minimum_streak: int | None
     _enable_empty_monitoring: bool | None
-    _host_for_status_check: str | None
-    _port_for_status_check: int | None
+    _status_check_host: str | None
+    _status_check_port: int | None
+    _status_check_protocol_version: int | None
     _stop_kill_bonus_delay: float | None
     _stop_on_empty_prolonged: bool | None
     _stop_terminate_attempts: int | None
@@ -120,7 +120,6 @@ class OneTimeMinecraftInstance:
 
     # Assigned between one and two
     _process: asyncio.subprocess.Process | None
-    _status_checker: mcstatus.JavaServer | None
     _stdin_pipe: asyncio.StreamWriter | None
     _stdin_queue: asyncio.Queue[bytes] | None
     _stdout_pipe: asyncio.StreamReader | None
@@ -163,8 +162,9 @@ class OneTimeMinecraftInstance:
 
         self._empty_prolonged_minimum_streak = None
         self._enable_empty_monitoring = None
-        self._host_for_status_check = None
-        self._port_for_status_check = None
+        self._status_check_host = None
+        self._status_check_port = None
+        self._status_check_protocol_version = None
         self._stop_kill_bonus_delay = None
         self._stop_on_empty_prolonged = None
         self._stop_terminate_attempts = None
@@ -174,7 +174,6 @@ class OneTimeMinecraftInstance:
         self._stdin_pipe = None
         self._stdin_queue = None
         self._process = None
-        self._status_checker = None
 
     @classmethod
     async def create_process(
@@ -196,9 +195,7 @@ class OneTimeMinecraftInstance:
                 start_new_session=True,
             )
         )
-        logging.info(
-            f"Created a process for the one-time minecraft instance | {process.pid}"
-        )
+        logging.info(f"Created a process for the one-time minecraft instance | {process.pid}") # fmt: skip
         # TODO: Is it safe to just kill it here?
         # I'll keep it for now because I think that it's safe to do as long as it's extremely early in the starting process
         # Hopefully...
@@ -222,8 +219,9 @@ class OneTimeMinecraftInstance:
         self,
         empty_prolonged_minimum_streak: int,
         enable_empty_monitoring: bool,
-        host_for_status_check: str,
-        port_for_status_check: int,
+        status_check_host: str,
+        status_check_port: int,
+        status_check_protocol_version: int,
         stop_kill_bonus_delay: float,
         stop_on_empty_prolonged: bool,
         stop_terminate_attempts: int,
@@ -252,8 +250,9 @@ class OneTimeMinecraftInstance:
 
         self._empty_prolonged_minimum_streak = empty_prolonged_minimum_streak
         self._enable_empty_monitoring = enable_empty_monitoring
-        self._host_for_status_check = host_for_status_check
-        self._port_for_status_check = port_for_status_check
+        self._status_check_host = status_check_host
+        self._status_check_port = status_check_port
+        self._status_check_protocol_version = status_check_protocol_version
         self._stop_kill_bonus_delay = stop_kill_bonus_delay
         self._stop_on_empty_prolonged = stop_on_empty_prolonged
         self._stop_terminate_attempts = stop_terminate_attempts
@@ -295,21 +294,7 @@ class OneTimeMinecraftInstance:
             await run_on_stopping_hooks()
             raise
 
-        try:
-            status_checker = mcstatus.JavaServer(
-                host=host_for_status_check,
-                port=port_for_status_check,
-                timeout=MINECRAFT_STATUS_CHECK_TIMEOUT_SECONDS,
-                query_port=port_for_status_check,
-            )
-        except Exception:
-            # TODO Specify exceptions
-            logging.error("One-time minecraft instance failed to create a status checker") # fmt: skip
-            self._stopping_event.set()
-            raise
-
         self._process = process
-        self._status_checker = status_checker
         self._stdin_pipe = stdin_pipe
         self._stdin_queue = asyncio.Queue()
         self._stdout_pipe = stdout_pipe
@@ -494,22 +479,36 @@ class OneTimeMinecraftInstance:
 
     async def get_status(
         self,
-    ) -> mcstatus.responses.JavaStatusResponse | MinecraftStatusFailReason:
+    ) -> mcstatus.responses.BaseStatusResponse:
         """
         At least 2 and not stopping
         """
         self.ensure_startup_ge_two()
         self.ensure_not_stopping()
-        status_checker: mcstatus.JavaServer = self._get_status_checker()
-
-        try:
-            status: mcstatus.responses.JavaStatusResponse = (
-                await status_checker.async_status()
+        status_check_protocol_version: int = self._get_status_check_protocol_version()
+        status: mcstatus.responses.BaseStatusResponse
+        if (
+            status_check_protocol_version
+            == MINECRAFT_STATUS_CHECK_PROTOCOL_MAGIC_VERSION_VALUE_LEGACY
+        ):
+            logging.debug("One-time minecraft instance getting status getting new legacy status checker") # fmt: skip
+            legacy_status_checker: mcstatus.LegacyServer = (
+                self._get_new_legacy_status_checker()
             )
-        except ConnectionRefusedError:
-            logging.warning("One-time minecraft instance got connection refused on status check") # fmt: skip
-            return MinecraftStatusFailReason.CONNECTION_REFUSED
-        return status
+            logging.debug("One-time minecraft instance getting status") # fmt: skip
+            status = await legacy_status_checker.async_status(
+                tries=MINECRAFT_STATUS_CHECK_TRIES
+            )
+            return status
+        else:
+            logging.debug("One-time minecraft instance getting status getting new status checker") # fmt: skip
+            status_checker: mcstatus.JavaServer = self._get_new_status_checker()
+            logging.debug("One-time minecraft instance getting status") # fmt: skip
+            status = await status_checker.async_status(
+                tries=MINECRAFT_STATUS_CHECK_TRIES,
+                version=status_check_protocol_version,
+            )
+            return status
 
     async def notify_not_empty(self) -> None:
         """
@@ -543,6 +542,7 @@ class OneTimeMinecraftInstance:
             return
 
         if streak < empty_prolonged_minimum_streak:
+            self._empty_streak = streak + 1
             await self._run_on_empty_hooks()
         else:
             self._empty_streak = 0
@@ -616,17 +616,23 @@ class OneTimeMinecraftInstance:
         assert self._enable_empty_monitoring is not None
         return self._enable_empty_monitoring
 
-    def _get_host_for_status_check(self) -> str:
+    def _get_status_check_host(self) -> str:
         """At least 1"""
         self.ensure_startup_ge_one()
-        assert self._host_for_status_check is not None
-        return self._host_for_status_check
+        assert self._status_check_host is not None
+        return self._status_check_host
 
-    def _get_port_for_status_check(self) -> int:
+    def _get_status_check_port(self) -> int:
         """At least 1"""
         self.ensure_startup_ge_one()
-        assert self._port_for_status_check is not None
-        return self._port_for_status_check
+        assert self._status_check_port is not None
+        return self._status_check_port
+
+    def _get_status_check_protocol_version(self) -> int:
+        """At least 1"""
+        self.ensure_startup_ge_one()
+        assert self._status_check_protocol_version is not None
+        return self._status_check_protocol_version
 
     def _get_stop_kill_bonus_delay(self) -> float:
         """At least 1"""
@@ -658,11 +664,50 @@ class OneTimeMinecraftInstance:
         assert self._process is not None
         return self._process
 
-    def _get_status_checker(self) -> mcstatus.JavaServer:
-        """At least 2"""
-        self.ensure_startup_ge_two()
-        assert self._status_checker is not None
-        return self._status_checker
+    def _get_new_status_checker(self) -> mcstatus.JavaServer:
+        """At least 1"""
+        self.ensure_startup_ge_one()
+        status_check_host: str = self._get_status_check_host()
+        status_check_port: int = self._get_status_check_port()
+        status_check_protocol_version: int = self._get_status_check_protocol_version()
+        assert status_check_protocol_version != MINECRAFT_STATUS_CHECK_PROTOCOL_MAGIC_VERSION_VALUE_LEGACY, "must be legacy" # fmt: skip
+
+        try:
+            status_checker = mcstatus.JavaServer(
+                host=status_check_host,
+                port=status_check_port,
+                timeout=MINECRAFT_STATUS_CHECK_TIMEOUT_SECONDS,
+                query_port=status_check_port,
+            )
+        except Exception:
+            # TODO Specify exceptions
+            logging.error("One-time minecraft instance failed to create a status checker") # fmt: skip
+            self._stopping_event.set()
+            raise
+
+        return status_checker
+
+    def _get_new_legacy_status_checker(self) -> mcstatus.LegacyServer:
+        """At least 1"""
+        self.ensure_startup_ge_one()
+        status_check_host: str = self._get_status_check_host()
+        status_check_port: int = self._get_status_check_port()
+        status_check_protocol_version: int = self._get_status_check_protocol_version()
+        assert status_check_protocol_version == MINECRAFT_STATUS_CHECK_PROTOCOL_MAGIC_VERSION_VALUE_LEGACY, "must not be legacy" # fmt: skip
+
+        try:
+            status_checker = mcstatus.LegacyServer(
+                host=status_check_host,
+                port=status_check_port,
+                timeout=MINECRAFT_STATUS_CHECK_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            # TODO Specify exceptions
+            logging.error("One-time minecraft instance failed to create a status checker") # fmt: skip
+            self._stopping_event.set()
+            raise
+
+        return status_checker
 
     def _get_stdout_pipe(self) -> asyncio.StreamReader:
         """At least 2"""
@@ -775,8 +820,9 @@ class MinecraftInstanceEntry:
         self,
         empty_prolonged_minimum_streak: int,
         enable_empty_monitoring: bool,
-        host_for_status_check: str,
-        port_for_status_check: int,
+        status_check_host: str,
+        status_check_port: int,
+        status_check_protocol_version: int,
         stop_kill_bonus_delay: float,
         stop_on_empty_prolonged: bool,
         stop_terminate_attempts: int,
@@ -806,8 +852,9 @@ class MinecraftInstanceEntry:
                 self._start(
                     empty_prolonged_minimum_streak=empty_prolonged_minimum_streak,
                     enable_empty_monitoring=enable_empty_monitoring,
-                    host_for_status_check=host_for_status_check,
-                    port_for_status_check=port_for_status_check,
+                    status_check_host=status_check_host,
+                    status_check_port=status_check_port,
+                    status_check_protocol_version=status_check_protocol_version,
                     stop_kill_bonus_delay=stop_kill_bonus_delay,
                     stop_on_empty_prolonged=stop_on_empty_prolonged,
                     stop_terminate_attempts=stop_terminate_attempts,
@@ -830,8 +877,9 @@ class MinecraftInstanceEntry:
         self,
         empty_prolonged_minimum_streak: int,
         enable_empty_monitoring: bool,
-        host_for_status_check: str,
-        port_for_status_check: int,
+        status_check_host: str,
+        status_check_port: int,
+        status_check_protocol_version: int,
         stop_kill_bonus_delay: float,
         stop_on_empty_prolonged: bool,
         stop_terminate_attempts: int,
@@ -875,8 +923,9 @@ class MinecraftInstanceEntry:
                 await one_time_instance.start(
                     empty_prolonged_minimum_streak=empty_prolonged_minimum_streak,
                     enable_empty_monitoring=enable_empty_monitoring,
-                    host_for_status_check=host_for_status_check,
-                    port_for_status_check=port_for_status_check,
+                    status_check_host=status_check_host,
+                    status_check_port=status_check_port,
+                    status_check_protocol_version=status_check_protocol_version,
                     stop_kill_bonus_delay=stop_kill_bonus_delay,
                     stop_on_empty_prolonged=stop_on_empty_prolonged,
                     stop_terminate_attempts=stop_terminate_attempts,
@@ -963,11 +1012,11 @@ class MinecraftInstanceEntry:
             elif entry_finished:
                 raise MinecraftInstanceEntryError(
                     "Minecraft instance entry finished without stopping after creation"
-                )  # fmt: skip1
+                )  # fmt: skip
 
     async def get_status(
         self,
-    ) -> mcstatus.responses.JavaStatusResponse | MinecraftStatusFailReason:
+    ) -> mcstatus.responses.BaseStatusResponse:
         """
         Entry must be running
         Does not catch the one-time instance's state errors
@@ -1002,8 +1051,6 @@ class MinecraftInstanceEntry:
         Entry must be running
         Catches the one-time instance's state errors
         """
-        self.ensure_running()
-
         self.ensure_running()
         running_instance: OneTimeMinecraftInstance = self._get_running_instance()
         try:
@@ -1101,8 +1148,9 @@ class MinecraftEntryStartPreconfiguration(TypedDict):
 
     empty_prolonged_minimum_streak: Required[ReadOnly[int]]
     enable_empty_monitoring: Required[ReadOnly[bool]]
-    host_for_status_check: Required[ReadOnly[str]]
-    port_for_status_check: Required[ReadOnly[int]]
+    status_check_host: Required[ReadOnly[str]]
+    status_check_port: Required[ReadOnly[int]]
+    status_check_protocol_version: Required[ReadOnly[int]]
     stop_kill_bonus_delay: Required[ReadOnly[float]]
     stop_on_empty_prolonged: Required[ReadOnly[bool]]
     stop_terminate_attempts: Required[ReadOnly[int]]
@@ -1128,8 +1176,9 @@ def new_minecraft_entry_start_preconfiguration_from_env_config(
     return MinecraftEntryStartPreconfiguration(
         empty_prolonged_minimum_streak=env_config["empty_prolonged_minimum_streak"],
         enable_empty_monitoring=env_config["enable_empty_monitoring"],
-        host_for_status_check=env_config["host_for_status_check"],
-        port_for_status_check=env_config["port_for_status_check"],
+        status_check_host=env_config["status_check_host"],
+        status_check_port=env_config["status_check_port"],
+        status_check_protocol_version=env_config["status_check_protocol_version"],
         stop_kill_bonus_delay=env_config["stop_kill_bonus_delay"],
         stop_on_empty_prolonged=env_config["stop_on_empty_prolonged"],
         stop_terminate_attempts=env_config["stop_terminate_attempts"],
@@ -1177,7 +1226,10 @@ class MinecraftManager:
         self.entries_start_preconfigurations_by_name = dict()
 
     async def start(self) -> None:
+        started_tasks: MutableSequence[asyncio.Task[Any]] = []
         self._emptiness_monitor = asyncio.create_task(self._start_emptiness_monitor())
+        started_tasks.append(self._emptiness_monitor)
+        await asyncio.wait(started_tasks, return_when=asyncio.FIRST_EXCEPTION)
 
     def get_entry(self, name: str) -> MinecraftInstanceEntry | None:
         name = name.lower()
@@ -1241,8 +1293,9 @@ class MinecraftManager:
         entry: MinecraftInstanceEntry,
         empty_prolonged_minimum_streak: int,
         enable_empty_monitoring: bool,
-        host_for_status_check: str,
-        port_for_status_check: int,
+        status_check_host: str,
+        status_check_port: int,
+        status_check_protocol_version: int,
         stop_kill_bonus_delay: float,
         stop_on_empty_prolonged: bool,
         stop_terminate_attempts: int,
@@ -1289,8 +1342,9 @@ class MinecraftManager:
         entry.start_as_task(
             empty_prolonged_minimum_streak=empty_prolonged_minimum_streak,
             enable_empty_monitoring=enable_empty_monitoring,
-            host_for_status_check=host_for_status_check,
-            port_for_status_check=port_for_status_check,
+            status_check_host=status_check_host,
+            status_check_port=status_check_port,
+            status_check_protocol_version=status_check_protocol_version,
             stop_kill_bonus_delay=stop_kill_bonus_delay,
             stop_on_empty_prolonged=stop_on_empty_prolonged,
             stop_terminate_attempts=stop_terminate_attempts,
@@ -1326,8 +1380,9 @@ class MinecraftManager:
             # fmt: off
             empty_prolonged_minimum_streak=preconfiguration["empty_prolonged_minimum_streak"],
             enable_empty_monitoring=preconfiguration["enable_empty_monitoring"],
-            host_for_status_check=preconfiguration["host_for_status_check"],
-            port_for_status_check=preconfiguration["port_for_status_check"],
+            status_check_host=preconfiguration["status_check_host"],
+            status_check_port=preconfiguration["status_check_port"],
+            status_check_protocol_version=preconfiguration["status_check_protocol_version"],
             stop_kill_bonus_delay=preconfiguration["stop_kill_bonus_delay"],
             stop_on_empty_prolonged=preconfiguration["stop_on_empty_prolonged"],
             stop_terminate_attempts=preconfiguration["stop_terminate_attempts"],
@@ -1378,10 +1433,11 @@ class MinecraftManager:
         while True:
             try:
                 for entry in self.entries_by_name.values():
+                    # TODO Maybe make tasks for each check and wait for them all instead of this sequential for loop
+                    # But how to handle errors cleanly in that case? Hooks may be in the middle of executing, etc.
                     if not entry.get_running().get():
                         continue
                     entry_name: str = entry.name
-                    logging.debug(f"Minecraft manager emptiness monitor checking status for entry | {entry_name}")
                     try:
                         enable_empty_monitoring: bool = entry.get_enable_empty_monitoring()
                     except OneTimeMinecraftInstanceInvalidStateError as e:
@@ -1390,40 +1446,61 @@ class MinecraftManager:
 
                     if not enable_empty_monitoring:
                         continue
-                    
-                    status: mcstatus.responses.JavaStatusResponse | MinecraftStatusFailReason
+
+                    logging.debug(f"Minecraft manager emptiness monitor checking status for entry | {entry_name}")
                     try:
+                        # A timeout may come from out context manager or the call's internal timeout
                         async with asyncio.timeout(delay=MINECRAFT_EMPTINESS_MONITOR_STATUS_TIMEOUT_S):
+                            status: mcstatus.responses.BaseStatusResponse
                             status = await entry.get_status()
                     except OneTimeMinecraftInstanceInvalidStateError as e:
                         logging.error(f"Minecraft manager emptiness monitor getting status failed with invalid state error ({repr(e)}) ({entry_name=})")
                         continue
-                    except TimeoutError:
+                    except TimeoutError as e:
                         logging.warning(f"Minecraft manager emptiness monitor getting status timed out ({entry_name=})")
                         continue
-
-                    if isinstance(status, MinecraftStatusFailReason):
-                        logging.error(f"Minecraft manager emptiness monitor getting instance status failed with reason: {status} ({entry_name=})")
+                    except ConnectionRefusedError as e:
+                        logging.warning("One-time minecraft instance got connection refused on status check") # fmt: skip
                         continue
+                    except OSError as e:
+                        # Mcstatus' OSErrors are not severe
+                        logging.info(f"Minecraft manager emptiness monitor getting status failed ({entry_name=}) | {repr(e)}")
+                        continue
+                    except Exception as e:
+                        logging.error(f"Minecraft manager emptiness monitor getting status got unknown exception ({entry_name=}) | {repr(e)}")
+                        raise
 
+                    logging.debug("Minecraft manager emptiness monitor checking players count")
                     players: int = status.players.online
                     logging.debug(f"Minecraft manager emptiness monitor got {players} players ({entry_name=})")
-                    if players == 0:
+                    if players > 0:
                         try:
-                            await self._notify_entry_not_empty(entry)
+                            async with asyncio.timeout(delay=MINECRAFT_EMPTINESS_MONITOR_NOTIFY_NOT_EMPTY_TIMEOUT_S):
+                                await self._notify_entry_not_empty(entry)
                         except MinecraftInstanceEntryInvalidStateError as e:
-                            # In case getting the status took a long time
                             logging.error(f"Minecraft manager emptiness monitor notifying not empty got invalid state error ({repr(e)}) ({entry_name=})") 
+                            continue
+                        except TimeoutError as e:
+                            # Unlike the status check, a timeout here is a bad sign so we want to log the stack trace
+                            logging.error(f"Minecraft manager emptiness monitor notifying not empty timed out ({entry_name=})", exc_info=e)
+                            continue
                         except Exception as e:
                             logging.error(f"Minecraft manager emptiness monitor notifying not empty failed ({repr(e)}) ({entry_name=})") 
-                    else:
-                        try:
+                            continue
+                    try:
+                        async with asyncio.timeout(delay=MINECRAFT_EMPTINESS_MONITOR_NOTIFY_EMPTY_TIMEOUT_S):
                             await self._notify_entry_empty(entry)
-                        except MinecraftInstanceEntryInvalidStateError as e:
-                            # In case getting the status took a long time
-                            logging.error(f"Minecraft manager emptiness monitor notifying not empty got invalid state error ({repr(e)}) ({entry_name=})") 
-                        except Exception as e:
-                            logging.error(f"Minecraft manager emptiness monitor notifying empty failed ({repr(e)}) ({entry_name=})") 
+                    except MinecraftInstanceEntryInvalidStateError as e:
+                        # In case getting the status took a long time
+                        logging.error(f"Minecraft manager emptiness monitor notifying not empty got invalid state error ({repr(e)}) ({entry_name=})") 
+                        continue
+                    except TimeoutError as e:
+                        # Unlike the status check, a timeout here is a bad sign so we want to log the stack trace
+                        logging.error(f"Minecraft manager emptiness monitor notifying empty timed out ({entry_name=})", exc_info=e)
+                        continue
+                    except Exception as e:
+                        logging.error(f"Minecraft manager emptiness monitor notifying empty failed ({repr(e)}) ({entry_name=})") 
+                        continue
 
                 await asyncio.sleep(self.empty_check_interval_s)
             except asyncio.CancelledError as e:

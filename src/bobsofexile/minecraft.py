@@ -1487,20 +1487,21 @@ class MinecraftManager:
                         except Exception as e:
                             logging.error(f"Minecraft manager emptiness monitor notifying not empty failed ({repr(e)}) ({entry_name=})") 
                             continue
-                    try:
-                        async with asyncio.timeout(delay=MINECRAFT_EMPTINESS_MONITOR_NOTIFY_EMPTY_TIMEOUT_S):
-                            await self._notify_entry_empty(entry)
-                    except MinecraftInstanceEntryInvalidStateError as e:
-                        # In case getting the status took a long time
-                        logging.error(f"Minecraft manager emptiness monitor notifying not empty got invalid state error ({repr(e)}) ({entry_name=})") 
-                        continue
-                    except TimeoutError as e:
-                        # Unlike the status check, a timeout here is a bad sign so we want to log the stack trace
-                        logging.error(f"Minecraft manager emptiness monitor notifying empty timed out ({entry_name=})", exc_info=e)
-                        continue
-                    except Exception as e:
-                        logging.error(f"Minecraft manager emptiness monitor notifying empty failed ({repr(e)}) ({entry_name=})") 
-                        continue
+                    else:
+                        try:
+                            async with asyncio.timeout(delay=MINECRAFT_EMPTINESS_MONITOR_NOTIFY_EMPTY_TIMEOUT_S):
+                                await self._notify_entry_empty(entry)
+                        except MinecraftInstanceEntryInvalidStateError as e:
+                            # In case getting the status took a long time
+                            logging.error(f"Minecraft manager emptiness monitor notifying not empty got invalid state error ({repr(e)}) ({entry_name=})") 
+                            continue
+                        except TimeoutError as e:
+                            # Unlike the status check, a timeout here is a bad sign so we want to log the stack trace
+                            logging.error(f"Minecraft manager emptiness monitor notifying empty timed out ({entry_name=})", exc_info=e)
+                            continue
+                        except Exception as e:
+                            logging.error(f"Minecraft manager emptiness monitor notifying empty failed ({repr(e)}) ({entry_name=})") 
+                            continue
 
                 await asyncio.sleep(self.empty_check_interval_s)
             except asyncio.CancelledError as e:

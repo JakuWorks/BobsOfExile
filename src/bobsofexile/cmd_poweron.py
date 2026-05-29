@@ -1,47 +1,52 @@
+from dataclasses import dataclass
 import logging
 from typing import AsyncIterable
 
 import asyncclick as click
 
-from .hardcoded import REMOTE_POWEROFF_RETRIES, REMOTE_POWEROFF_RETRY_INTERVAL
-
-from .power_device import PowerDeviceDetails
 from .commands import (
     simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
+    ILockingComponent,
     CommandsRegistry,
-    CallContextGrand,
+    CommandCallBase,
+    CommandCallerBase,
 )
 from .responder import IResponder, ILongResponse
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
+from .permission_info import IPermissionInfo
+
+from .hardcoded import REMOTE_POWEROFF_RETRIES, REMOTE_POWEROFF_RETRY_INTERVAL
+from .power_device import PowerDeviceDetails, IPowerController
 
 NAME: str = "poweron"
 
 
-class CommandCallPoweron(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-    )
+@dataclass(frozen=True, slots=True)
+class CommandInvocationPoweron:
+    pass
 
-    responder: IResponder
-    call_context_grand: CallContextGrand
+
+class CommandCallPoweron(CommandCallBase[CommandInvocationPoweron]):
+    client_power_controller: IPowerController
 
     def __init__(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self,
+        invocation: CommandInvocationPoweron,
+        responder: IResponder,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        client_power_controller: IPowerController,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
+        self.client_power_controller = client_power_controller
 
     async def call(self) -> None:
-        if self.call_context_grand.client_power_controller is None:
-            await self.responder.respond("Client power controller is missing. Cannot power on") # fmt: skip
-            return
-
         # fmt: off
-        msg_begin: str = "Local (client) power on results:"
+        msg_begin: str = "Client power on results:"
 
         msg_device_details: str = "Checking power device details..."
         msg_device_test_ok: str = "Power device connection OK..."
@@ -63,7 +68,7 @@ class CommandCallPoweron(ICommandCall):
         await message.start()
 
         details: PowerDeviceDetails | None = (
-            await self.call_context_grand.client_power_controller.get_details()
+            await self.client_power_controller.get_details()
         )
 
         logging.info(msg_device_details)
@@ -84,7 +89,7 @@ class CommandCallPoweron(ICommandCall):
         await message.add_line(msg_device_already_on_no)
 
         power_on_retrier: AsyncIterable[bool] = (
-            self.call_context_grand.client_power_controller.power_on_async_with_retries(
+            self.client_power_controller.power_on_async_with_retries(
                 retries=REMOTE_POWEROFF_RETRIES, interval=REMOTE_POWEROFF_RETRY_INTERVAL
             )
         )
@@ -111,39 +116,57 @@ class CommandCallPoweron(ICommandCall):
             logging.info(msg_final_no)
 
 
-class CommandInvocationPoweron(ICommandInvocationStandard):
-    __slots__ = ()
+class CommandCallerPoweron(CommandCallerBase[CommandInvocationPoweron]):
+    client_power_controller: IPowerController
 
-    def __init__(self) -> None:
-        pass
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        client_power_controller: IPowerController,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
+        )
+        self.client_power_controller = client_power_controller
+
+    def make_invocation(
+        self,
+    ) -> tuple["CommandCallerPoweron", CommandInvocationPoweron]:
+        return (self, CommandInvocationPoweron())
 
     def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self, invocation: CommandInvocationPoweron, responder: IResponder
     ) -> CommandCallPoweron:
         return CommandCallPoweron(
-            responder=responder, call_context_grand=call_context_grand
+            invocation=invocation,
+            responder=responder,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+            client_power_controller=self.client_power_controller,
         )
-
-    def get_default_respect_locks(self) -> bool:
-        return True
-
-
-def invoke_poweron() -> CommandInvocationPoweron:
-    return CommandInvocationPoweron()
 
 
 def setup_cmd_poweron(
-    commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
+    commands_registry: CommandsRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
+    client_power_controller: IPowerController,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
+    caller: CommandCallerPoweron = CommandCallerPoweron(
+        locking_component=locking_component,
+        permission_info=permission_info,
+        client_power_controller=client_power_controller,
+    )
 
     command: click.Command = click.Command(
-        name=NAME, callback=invoke_poweron, add_help_option=False
+        name=NAME,
+        callback=caller.make_invocation,
+        add_help_option=False,
     )
 
     simple_setup_cmd(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

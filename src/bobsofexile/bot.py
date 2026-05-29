@@ -5,7 +5,7 @@ import asyncclick as click
 import discord
 
 from .discord_responder import DiscordResponder
-from .commands import CommandsRegistry
+from .commands import CommandsRegistry, CommandsRegistryEntryNotFoundError
 from .responder import IResponder
 from .async_convenience import IBooleanEvent, IMutableBooleanEvent, BooleanEvent
 
@@ -37,9 +37,10 @@ class Bot:
             "Bot was set as ready", "Bot was set as ready AGAIN"
         )
 
-        self.client.event(wrap_on_ready(self, on_ready_event=self._on_ready_event))
-        self.client.event(wrap_on_message(self))
-        self.client.event(wrap_on_error())
+    def setup_events(self) -> None:
+        self.client.event(self._wrap_on_ready(on_ready_event=self._on_ready_event))
+        self.client.event(self._wrap_on_message())
+        self.client.event(self._wrap_on_error())
 
     async def login(self, token: str) -> None:
         await self.client.login(token)
@@ -61,66 +62,67 @@ class Bot:
     def get_after_prefix(self, text: str) -> str:
         return text[self.prefix_l :]
 
-
-def wrap_on_message(bot: Bot) -> Callable[[discord.Message], Coroutine[Any, Any, None]]:
-    async def on_message(message_context: discord.Message) -> None:
-        if not bot.check_is_prefixed(message_context.content):
-            return
-        command_text: str = bot.get_after_prefix(message_context.content)
-        if command_text == "":
-            return
-
-        responder: IResponder = DiscordResponder(
-            sending_channel=message_context.channel
-        )
-
-        try:
-            await bot.registry.call_command(
-                command_text,
-                author_id=str(message_context.author.id),
-                responder=responder,
-            )
-        except click.UsageError as e:
-            if e.ctx is None:
-                await message_context.channel.send("Malformed command")
+    def _wrap_on_message(
+        self,
+    ) -> Callable[[discord.Message], Coroutine[Any, Any, None]]:
+        async def on_message(message_context: discord.Message) -> None:
+            if not self.check_is_prefixed(message_context.content):
                 return
-            msg_t: str = "Malformed command.\n" + e.ctx.get_help()
-            await message_context.channel.send(msg_t)
-        except click.ClickException as e:
-            await message_context.channel.send("Unknown click exception")
-            logging.error(e)
+            command_text: str = self.get_after_prefix(message_context.content)
+            if command_text == "":
+                return
 
-    return on_message
+            responder: IResponder = DiscordResponder(
+                sending_channel=message_context.channel
+            )
 
+            try:
+                await self.registry.call_command(
+                    command_text,
+                    author_id=str(message_context.author.id),
+                    responder=responder,
+                )
+            except CommandsRegistryEntryNotFoundError:
+                pass
+            except click.UsageError as e:
+                if e.ctx is None:
+                    await message_context.channel.send("Malformed command")
+                    return
+                msg_t: str = "Malformed command.\n" + e.ctx.get_help()
+                await message_context.channel.send(msg_t)
+            except click.ClickException as e:
+                await message_context.channel.send("Unknown click exception")
+                logging.error(e)
 
-def wrap_on_ready(
-    bot: Bot, on_ready_event: IMutableBooleanEvent
-) -> Callable[[], Coroutine[Any, Any, None]]:
-    logging.info("Bot ready")
+        return on_message
 
-    async def on_ready() -> None:
-        logging.info("Setting activity")
+    def _wrap_on_ready(
+        self, on_ready_event: IMutableBooleanEvent
+    ) -> Callable[[], Coroutine[Any, Any, None]]:
+        logging.info("Bot ready")
 
-        # Shit code warning
-        status: str
-        if bot.status == "":
-            status = " "
-        else:
-            status = bot.status
+        async def on_ready() -> None:
+            logging.info("Setting activity")
 
-        activity: discord.CustomActivity = discord.CustomActivity(name=status)
-        await bot.client.change_presence(activity=activity)
-        on_ready_event.set()
+            # Shit code warning
+            status: str
+            if self.status == "":
+                status = " "
+            else:
+                status = self.status
 
-    return on_ready
+            activity: discord.CustomActivity = discord.CustomActivity(name=status)
+            await self.client.change_presence(activity=activity)
+            on_ready_event.set()
 
+        return on_ready
 
-def wrap_on_error() -> Callable[[str], Coroutine[Any, Any, None]]:
-    async def on_error(event_name: str, *args: Any, **kwargs: Any) -> None:
-        try:
-            raise
-        except Exception as e:
-            logging.error("Got error!", exc_info=e)
-            raise
+    def _wrap_on_error(self) -> Callable[[str], Coroutine[Any, Any, None]]:
+        async def on_error(event_name: str, *args: Any, **kwargs: Any) -> None:
+            try:
+                raise
+            except Exception as e:
+                logging.error("Got error!", exc_info=e)
+                raise
 
-    return on_error
+        return on_error

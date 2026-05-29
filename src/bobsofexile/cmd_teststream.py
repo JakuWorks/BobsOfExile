@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import logging
 import asyncio
 
@@ -5,32 +6,36 @@ import asyncclick as click
 
 from .commands import (
     simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
+    ILockingComponent,
     CommandsRegistry,
-    CallContextGrand,
+    CommandCallBase,
+    CommandCallerBase,
 )
 from .responder import IResponder, ILongResponse
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
+from .permission_info import IPermissionInfo
 
 NAME: str = "teststream"
 
 
-class CommandCallTestStream(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-    )
+@dataclass(frozen=True, slots=True)
+class CommandInvocationTestStream:
+    pass
 
-    responder: IResponder
-    call_context_grand: CallContextGrand
 
+class CommandCallTestStream(CommandCallBase[CommandInvocationTestStream]):
     def __init__(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self,
+        invocation: CommandInvocationTestStream,
+        responder: IResponder,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
 
     async def call(self) -> None:
         message: ILongResponse = self.responder.new_long_response(
@@ -43,39 +48,50 @@ class CommandCallTestStream(ICommandCall):
         logging.info("Streamtest")
 
 
-class CommandInvocationTestStream(ICommandInvocationStandard):
-    __slots__ = ()
-
-    def __init__(self) -> None:
-        pass
-
-    def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
-    ) -> CommandCallTestStream:
-        return CommandCallTestStream(
-            responder=responder, call_context_grand=call_context_grand
+class CommandCallerTestStream(CommandCallerBase[CommandInvocationTestStream]):
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
         )
 
-    def get_default_respect_locks(self) -> bool:
-        return False
+    def make_invocation(
+        self,
+    ) -> tuple["CommandCallerTestStream", CommandInvocationTestStream]:
+        return (self, CommandInvocationTestStream())
 
-
-def invoke_teststream() -> CommandInvocationTestStream:
-    return CommandInvocationTestStream()
+    def make_call(
+        self, invocation: CommandInvocationTestStream, responder: IResponder
+    ) -> CommandCallTestStream:
+        return CommandCallTestStream(
+            invocation=invocation,
+            responder=responder,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+        )
 
 
 def setup_cmd_teststream(
-    commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
+    commands_registry: CommandsRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
+    caller: CommandCallerTestStream = CommandCallerTestStream(
+        locking_component=locking_component,
+        permission_info=permission_info,
+    )
 
     command: click.Command = click.Command(
-        name=NAME, callback=invoke_teststream, add_help_option=False
+        name=NAME,
+        callback=caller.make_invocation,
+        add_help_option=False,
     )
 
     simple_setup_cmd(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

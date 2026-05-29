@@ -44,3 +44,16 @@ class PermissionInfo(IPermissionInfo):
 
     def get_description(self) -> str:
         return self._description
+
+
+class PermissionInfoDummy(IPermissionInfo):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        pass
+
+    def check_access(self, permission_context: PermissionContext) -> bool:
+        return True
+
+    def get_description(self) -> str:
+        return "Anyone (dummy component)"

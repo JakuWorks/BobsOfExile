@@ -1,56 +1,66 @@
+from dataclasses import dataclass
+
 import asyncclick as click
 
-from .minecraft import MinecraftInstanceEntry, MinecraftEntryStartPreconfiguration
 from .commands import (
     simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
+    ILockingComponent,
     CommandsRegistry,
-    CallContextGrand,
+    CommandCallBase,
+    CommandCallerBase,
 )
 from .responder import IResponder
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
+from .permission_info import IPermissionInfo
+
+from .minecraft import (
+    MinecraftInstanceEntry,
+    MinecraftEntryStartPreconfiguration,
+    MinecraftManager,
+)
 
 NAME: str = "serverstart"
 
 
-class CommandCallServerStart(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-        "name",
-    )
-
-    responder: IResponder
-    call_context_grand: CallContextGrand
-
+@dataclass(frozen=True, slots=True)
+class CommandInvocationServerStart:
     name: str
 
+
+class CommandCallServerStart(CommandCallBase[CommandInvocationServerStart]):
+    minecraft_manager: MinecraftManager
+
     def __init__(
-        self, responder: IResponder, call_context_grand: CallContextGrand, name: str
+        self,
+        invocation: CommandInvocationServerStart,
+        responder: IResponder,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        minecraft_manager: MinecraftManager,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
-        self.name = name
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
+        self.minecraft_manager = minecraft_manager
 
     async def call(self) -> None:
-        if self.call_context_grand.minecraft_manager is None:
-            await self.responder.respond("There is no minecraft manager.")
-            return
-        entry: MinecraftInstanceEntry | None = (
-            self.call_context_grand.minecraft_manager.get_entry(self.name)
+        entry: MinecraftInstanceEntry | None = self.minecraft_manager.get_entry(
+            self.invocation.name
         )
         if entry is None:
-            await self.responder.respond(f"No such minecraft entry. ({self.name})")
+            await self.responder.respond(
+                f"No such minecraft entry. ({self.invocation.name})"
+            )
             return
         entry_name: str = entry.name
         if entry.get_running().get():
             await self.responder.respond(f"Instance is already running. ({entry_name})")
             return
         entry_preconfiguration: MinecraftEntryStartPreconfiguration | None = (
-            self.call_context_grand.minecraft_manager.get_entry_start_preconfiguration(
-                self.name
+            self.minecraft_manager.get_entry_start_preconfiguration(
+                self.invocation.name
             )
         )
         if entry_preconfiguration is None:
@@ -79,7 +89,7 @@ class CommandCallServerStart(ICommandCall):
         async def on_instance_stopping() -> None:
             await self.responder.respond(f"Instance stopping. ({entry_name})")
 
-        await self.call_context_grand.minecraft_manager.start_entry_with_preconfiguration(
+        await self.minecraft_manager.start_entry_with_preconfiguration(
             entry=entry,
             preconfiguration=entry_preconfiguration,
             on_empty_hooks=[on_empty],
@@ -90,46 +100,62 @@ class CommandCallServerStart(ICommandCall):
         )
 
 
-class CommandInvocationServerStart(ICommandInvocationStandard):
-    __slots__ = ("name",)
+class CommandCallerServerStart(CommandCallerBase[CommandInvocationServerStart]):
+    minecraft_manager: MinecraftManager
 
-    name: str
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        minecraft_manager: MinecraftManager,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
+        )
+        self.minecraft_manager = minecraft_manager
 
-    def __init__(self, name: str) -> None:
-        self.name = name
+    def make_invocation(
+        self, name: str
+    ) -> tuple["CommandCallerServerStart", CommandInvocationServerStart]:
+        return (self, CommandInvocationServerStart(name=name))
 
     def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self, invocation: CommandInvocationServerStart, responder: IResponder
     ) -> CommandCallServerStart:
         return CommandCallServerStart(
-            responder=responder, call_context_grand=call_context_grand, name=self.name
+            invocation=invocation,
+            responder=responder,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+            minecraft_manager=self.minecraft_manager,
         )
-
-    def get_default_respect_locks(self) -> bool:
-        return True
-
-
-def invoke_serverstart(name: str) -> CommandInvocationServerStart:
-    return CommandInvocationServerStart(name=name)
 
 
 def setup_cmd_serverstart(
     commands_registry: CommandsRegistry,
-    ranks_registry: RanksRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
     default_target: str,
+    minecraft_manager: MinecraftManager,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
+    caller: CommandCallerServerStart = CommandCallerServerStart(
+        locking_component=locking_component,
+        permission_info=permission_info,
+        minecraft_manager=minecraft_manager,
+    )
 
     params: list[click.Parameter] = [
         click.Option(["-n", "--name"], type=str, required=False, default=default_target)
     ]
     command: click.Command = click.Command(
-        name=NAME, callback=invoke_serverstart, add_help_option=False, params=params
+        name=NAME,
+        callback=caller.make_invocation,
+        add_help_option=False,
+        params=params,
     )
 
     simple_setup_cmd(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

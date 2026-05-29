@@ -1,6 +1,14 @@
 from abc import ABC, abstractmethod
 
 
+class ResponderError(Exception):
+    pass
+
+
+class ResponderTransportError(ResponderError):
+    pass
+
+
 class ILongResponse(ABC):
     @abstractmethod
     async def start(self) -> None: ...

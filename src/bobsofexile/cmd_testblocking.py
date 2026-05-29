@@ -1,82 +1,101 @@
+from dataclasses import dataclass
 import logging
 import asyncio
 import random
 
 import asyncclick as click
 
-
 from .commands import (
     simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
+    ILockingComponent,
     CommandsRegistry,
-    CallContextGrand,
+    CommandCallBase,
+    CommandCallerBase,
 )
 from .responder import IResponder
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
+from .permission_info import IPermissionInfo
 
 NAME: str = "testblocking"
 
 
-class CommandCallTestBlocking(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-    )
+@dataclass(frozen=True, slots=True)
+class CommandInvocationTestBlocking:
+    pass
 
-    responder: IResponder
-    call_context_grand: CallContextGrand
 
+class CommandCallTestBlocking(CommandCallBase[CommandInvocationTestBlocking]):
     def __init__(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self,
+        invocation: CommandInvocationTestBlocking,
+        responder: IResponder,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
 
     async def call(self) -> None:
         t: int = 5
         random_id: int = random.randint(1, 99)
-        await self.responder.respond(f"Blocking {t=} ({random_id})")
-        logging.info(f"Blocking {t=} ({random_id})")
+        msg_blocking: str = f"Blocking {t=} {random_id}"
+        msg_finished: str = f"Finished blocking {random_id}"
+
+        await self.responder.respond(msg_blocking)
+        logging.info(msg_blocking)
+
         await asyncio.sleep(t)
-        await self.responder.respond(f"Finished blocking ({random_id})")
-        logging.info(f"Finished blocking ({random_id})")
+        await self.responder.respond(msg_finished)
+        logging.info(msg_finished)
 
 
-class CommandInvocationTestBlocking(ICommandInvocationStandard):
-    __slots__ = ()
-
-    def __init__(self) -> None:
-        pass
-
-    def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
-    ) -> CommandCallTestBlocking:
-        return CommandCallTestBlocking(
-            responder=responder, call_context_grand=call_context_grand
+class CommandCallerTestBlocking(CommandCallerBase[CommandInvocationTestBlocking]):
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
         )
 
-    def get_default_respect_locks(self) -> bool:
-        return True
+    def make_invocation(
+        self,
+    ) -> tuple["CommandCallerTestBlocking", CommandInvocationTestBlocking]:
+        return (self, CommandInvocationTestBlocking())
 
-
-def invoke_testblocking() -> CommandInvocationTestBlocking:
-    return CommandInvocationTestBlocking()
+    def make_call(
+        self, invocation: CommandInvocationTestBlocking, responder: IResponder
+    ) -> CommandCallTestBlocking:
+        return CommandCallTestBlocking(
+            invocation=invocation,
+            responder=responder,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+        )
 
 
 def setup_cmd_testblocking(
-    commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
+    commands_registry: CommandsRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
+    caller: CommandCallerTestBlocking = CommandCallerTestBlocking(
+        locking_component=locking_component,
+        permission_info=permission_info,
+    )
 
     command: click.Command = click.Command(
-        name=NAME, callback=invoke_testblocking, add_help_option=False
+        name=NAME,
+        callback=caller.make_invocation,
+        add_help_option=False,
     )
 
     simple_setup_cmd(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

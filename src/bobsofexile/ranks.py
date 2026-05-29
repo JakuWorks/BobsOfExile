@@ -6,7 +6,7 @@ from .hardcoded import (
     ENV_KEY_RANK_OWNER_USERS,
     BOT_RANKS_SEPARATOR,
 )
-from .permissions import IPermissionInfo, PermissionInfo
+from .permission_info import IPermissionInfo, PermissionInfo
 from .main_convenience import get_env_or_error
 
 

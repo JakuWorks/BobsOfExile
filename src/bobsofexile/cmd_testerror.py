@@ -1,35 +1,40 @@
+from dataclasses import dataclass
 import logging
 
 import asyncclick as click
 
 from .commands import (
     simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
+    ILockingComponent,
     CommandsRegistry,
-    CallContextGrand,
+    CommandCallBase,
+    CommandCallerBase,
 )
 from .responder import IResponder
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
+from .permission_info import IPermissionInfo
 
 NAME: str = "testerror"
 
 
-class CommandCallTestError(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-    )
+@dataclass(frozen=True, slots=True)
+class CommandInvocationTestError:
+    pass
 
-    responder: IResponder
-    call_context_grand: CallContextGrand
 
+class CommandCallTestError(CommandCallBase[CommandInvocationTestError]):
     def __init__(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self,
+        invocation: CommandInvocationTestError,
+        responder: IResponder,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
 
     async def call(self) -> None:
         await self.responder.respond("Msg before error")
@@ -45,39 +50,50 @@ class CommandCallTestError(ICommandCall):
         logging.info("Error test after")
 
 
-class CommandInvocationTestError(ICommandInvocationStandard):
-    __slots__ = ()
-
-    def __init__(self) -> None:
-        pass
-
-    def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
-    ) -> CommandCallTestError:
-        return CommandCallTestError(
-            responder=responder, call_context_grand=call_context_grand
+class CommandCallerTestError(CommandCallerBase[CommandInvocationTestError]):
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
         )
 
-    def get_default_respect_locks(self) -> bool:
-        return False
+    def make_invocation(
+        self,
+    ) -> tuple["CommandCallerTestError", CommandInvocationTestError]:
+        return (self, CommandInvocationTestError())
 
-
-def invoke_testerror() -> CommandInvocationTestError:
-    return CommandInvocationTestError()
+    def make_call(
+        self, invocation: CommandInvocationTestError, responder: IResponder
+    ) -> CommandCallTestError:
+        return CommandCallTestError(
+            invocation=invocation,
+            responder=responder,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+        )
 
 
 def setup_cmd_testerror(
-    commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
+    commands_registry: CommandsRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
+    caller: CommandCallerTestError = CommandCallerTestError(
+        locking_component=locking_component,
+        permission_info=permission_info,
+    )
 
     command: click.Command = click.Command(
-        name=NAME, callback=invoke_testerror, add_help_option=False
+        name=NAME,
+        callback=caller.make_invocation,
+        add_help_option=False,
     )
 
     simple_setup_cmd(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

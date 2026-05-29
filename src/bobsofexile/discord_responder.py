@@ -1,6 +1,6 @@
 from .responder import IResponder, ILongResponse
 from .discord_convenience import channel_send_text_or_file
-from .responder import IResponder
+from .responder import IResponder, ResponderTransportError
 from .main_convenience import get_env_or_error_int_positive
 from .hardcoded import ENV_KEY_DEFAULT_RESPONDER_DISCORD_CHANNEL_ID
 
@@ -68,11 +68,11 @@ class DiscordResponder(IResponder):
         )
 
 
-class DefaultResponderChannelNotExistsError(Exception):
+class DefaultResponderChannelNotExistsError(ResponderTransportError):
     pass
 
 
-class DefaultResponderChannelNotMessageableError(Exception):
+class DefaultResponderChannelNotMessageableError(ResponderTransportError):
     pass
 
 

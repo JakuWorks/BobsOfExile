@@ -1,44 +1,70 @@
-import asyncclick as click
+from dataclasses import dataclass
 from collections.abc import Sequence
+
+import asyncclick as click
 
 from .commands import (
     simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
+    ILockingComponent,
     CommandsRegistry,
-    CallContextGrand,
+    CommandCallBase,
+    CommandCallerBase,
 )
 from .responder import IResponder
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
-from .minecraft import MinecraftInstanceEntry
+from .permission_info import IPermissionInfo
+
+from .minecraft import MinecraftInstanceEntry, MinecraftManager
 
 NAME: str = "serverstatus"
 
 
-class CommandCallServerStatus(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-    )
+def format_entry_info_for_status(
+    name: str,
+    entry_running: bool,
+    instance_startup_phase: int | None,
+    entry_stopping: int | None,
+    estimate_max_ram_usage_bytes: int,
+) -> str:
+    indent: str = "    "
+    bytes_in_gb: int = 1024**3
+    estimate_max_ram_usage_bytes_gb: float = estimate_max_ram_usage_bytes / bytes_in_gb
 
-    responder: IResponder
-    call_context_grand: CallContextGrand
+    formatted: str = f"{name}:"
+    formatted += f"\n{indent}Running: {entry_running}"
+    formatted += f"\n{indent}Instance startup phase: {instance_startup_phase}"
+    formatted += f"\n{indent}Entry stopping: {entry_stopping}"
+    formatted += f"\n{indent}Estimate max RAM usage while running: {estimate_max_ram_usage_bytes_gb}Gb"
+
+    return formatted
+
+
+@dataclass(frozen=True, slots=True)
+class CommandInvocationServerStatus:
+    pass
+
+
+class CommandCallServerStatus(CommandCallBase[CommandInvocationServerStatus]):
+    minecraft_manager: MinecraftManager
 
     def __init__(
         self,
+        invocation: CommandInvocationServerStatus,
         responder: IResponder,
-        call_context_grand: CallContextGrand,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        minecraft_manager: MinecraftManager,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
+        self.minecraft_manager = minecraft_manager
 
     async def call(self) -> None:
-        if self.call_context_grand.minecraft_manager is None:
-            await self.responder.respond("There is no minecraft manager.")
-            return
         entries: Sequence[MinecraftInstanceEntry] = (
-            self.call_context_grand.minecraft_manager.get_all_entries()
+            self.minecraft_manager.get_all_entries()
         )
         if len(entries) == 0:
             await self.responder.respond("There are no instance entries")
@@ -65,9 +91,7 @@ class CommandCallServerStatus(ICommandCall):
             )
             blocks.append(formatted)
 
-        max_ram_bytes: int = (
-            self.call_context_grand.minecraft_manager.get_ram_counter().get_max_bytes()
-        )
+        max_ram_bytes: int = self.minecraft_manager.get_ram_counter().get_max_bytes()
         bytes_in_gb: int = 1024**3
         max_ram_bytes_gb: float = max_ram_bytes / bytes_in_gb
         blocks.append(f"Max ram for all instances: {max_ram_bytes_gb}Gb")
@@ -77,62 +101,57 @@ class CommandCallServerStatus(ICommandCall):
         await self.responder.respond(blocks_formatted)
 
 
-def format_entry_info_for_status(
-    name: str,
-    entry_running: bool,
-    instance_startup_phase: int | None,
-    entry_stopping: int | None,
-    estimate_max_ram_usage_bytes: int,
-) -> str:
-    indent: str = "    "
-    bytes_in_gb: int = 1024**3
-    estimate_max_ram_usage_bytes_gb: float = estimate_max_ram_usage_bytes / bytes_in_gb
+class CommandCallerServerStatus(CommandCallerBase[CommandInvocationServerStatus]):
+    minecraft_manager: MinecraftManager
 
-    formatted: str = f"{name}:"
-    formatted += f"\n{indent}Running: {entry_running}"
-    formatted += f"\n{indent}Instance startup phase: {instance_startup_phase}"
-    formatted += f"\n{indent}Entry stopping: {entry_stopping}"
-    formatted += f"\n{indent}Estimate max RAM usage while running: {estimate_max_ram_usage_bytes_gb}Gb"
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        minecraft_manager: MinecraftManager,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
+        )
+        self.minecraft_manager = minecraft_manager
 
-    return formatted
-
-
-class CommandInvocationServerStatus(ICommandInvocationStandard):
-    __slots__ = ()
-
-    def __init__(self) -> None:
-        pass
+    def make_invocation(
+        self,
+    ) -> tuple["CommandCallerServerStatus", CommandInvocationServerStatus]:
+        return (self, CommandInvocationServerStatus())
 
     def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self, invocation: CommandInvocationServerStatus, responder: IResponder
     ) -> CommandCallServerStatus:
         return CommandCallServerStatus(
+            invocation=invocation,
             responder=responder,
-            call_context_grand=call_context_grand,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+            minecraft_manager=self.minecraft_manager,
         )
-
-    def get_default_respect_locks(self) -> bool:
-        return False
-
-
-def invoke_serverstatus() -> CommandInvocationServerStatus:
-    return CommandInvocationServerStatus()
 
 
 def setup_cmd_serverstatus(
     commands_registry: CommandsRegistry,
-    ranks_registry: RanksRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
+    minecraft_manager: MinecraftManager,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_trusted_permission_info()
+    caller: CommandCallerServerStatus = CommandCallerServerStatus(
+        locking_component=locking_component,
+        permission_info=permission_info,
+        minecraft_manager=minecraft_manager,
+    )
 
-    params: list[click.Parameter] = []
     command: click.Command = click.Command(
-        name=NAME, callback=invoke_serverstatus, add_help_option=False, params=params
+        name=NAME,
+        callback=caller.make_invocation,
+        add_help_option=False,
     )
 
     simple_setup_cmd(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

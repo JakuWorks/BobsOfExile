@@ -1,104 +1,111 @@
+from dataclasses import dataclass
+
 import asyncclick as click
 
 from .commands import (
     simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
-    CallContextGrand,
+    ILockingComponent,
     CommandsRegistry,
+    CommandCallBase,
+    CommandCallerBase,
 )
 from .responder import IResponder
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
+from .permission_info import IPermissionInfo
 
 NAME: str = "help"
 
 
-class CommandCallHelp(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-        "cmd_or_empty",
-    )
-
-    responder: IResponder
-    call_context_grand: CallContextGrand
-
+@dataclass(frozen=True, slots=True)
+class CommandInvocationHelp:
     cmd_or_empty: str | None
+
+
+class CommandCallHelp(CommandCallBase[CommandInvocationHelp]):
+    commands_registry: CommandsRegistry
 
     def __init__(
         self,
+        invocation: CommandInvocationHelp,
         responder: IResponder,
-        call_context_grand: CallContextGrand,
-        cmd_or_empty: str | None,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        commands_registry: CommandsRegistry,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
-
-        self.cmd_or_empty = cmd_or_empty
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
+        self.commands_registry = commands_registry
 
     async def call(self) -> None:
-        if self.call_context_grand.commands_registry is None:
-            # This should NEVER happen
-            await self.responder.respond("No commands registry")
-            return
-
-        if self.cmd_or_empty is not None:
-            cmd_help: str | None = (
-                self.call_context_grand.commands_registry.get_command_help(
-                    command=self.cmd_or_empty
-                )
+        if self.invocation.cmd_or_empty is not None:
+            cmd_help: str | None = self.commands_registry.get_command_help(
+                command=self.invocation.cmd_or_empty
             )
             if cmd_help is None:
                 await self.responder.respond("No command found")
             else:
                 await self.responder.respond(cmd_help)
         else:
-            await self.responder.respond(
-                self.call_context_grand.commands_registry.get_all_help()
-            )
+            await self.responder.respond(self.commands_registry.get_group_help())
 
 
-class CommandInvocationHelp(ICommandInvocationStandard):
-    __slots__ = ("cmd_or_empty",)
+class CommandCallerHelp(CommandCallerBase[CommandInvocationHelp]):
+    commands_registry: CommandsRegistry
 
-    cmd_or_empty: str | None
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        commands_registry: CommandsRegistry,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
+        )
+        self.commands_registry = commands_registry
 
-    def __init__(self, cmd_or_empty: str | None) -> None:
-        self.cmd_or_empty = cmd_or_empty
+    def make_invocation(
+        self, cmd_or_empty: str | None
+    ) -> tuple["CommandCallerHelp", CommandInvocationHelp]:
+        return (self, CommandInvocationHelp(cmd_or_empty=cmd_or_empty))
 
     def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self, invocation: CommandInvocationHelp, responder: IResponder
     ) -> CommandCallHelp:
         return CommandCallHelp(
+            invocation=invocation,
             responder=responder,
-            call_context_grand=call_context_grand,
-            cmd_or_empty=self.cmd_or_empty,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+            commands_registry=self.commands_registry,
         )
-
-    def get_default_respect_locks(self) -> bool:
-        return False
-
-
-def invoke_help(cmd_or_empty: str | None) -> CommandInvocationHelp:
-    return CommandInvocationHelp(cmd_or_empty=cmd_or_empty)
 
 
 def setup_cmd_help(
-    commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
+    commands_registry: CommandsRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
+    caller: CommandCallerHelp = CommandCallerHelp(
+        locking_component=locking_component,
+        permission_info=permission_info,
+        commands_registry=commands_registry,
+    )
 
     params: list[click.Parameter] = [
         click.Argument(["cmd_or_empty"], type=str, required=False, default=None)
     ]
     command: click.Command = click.Command(
-        name=NAME, callback=invoke_help, add_help_option=False, params=params
+        name=NAME,
+        callback=caller.make_invocation,
+        add_help_option=False,
+        params=params,
     )
 
     simple_setup_cmd(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

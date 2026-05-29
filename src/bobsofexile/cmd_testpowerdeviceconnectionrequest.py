@@ -1,4 +1,16 @@
+from dataclasses import dataclass
+
 import asyncclick as click
+
+from .commands import (
+    simple_setup_cmd,
+    ILockingComponent,
+    CommandsRegistry,
+    CommandCallBase,
+    CommandCallerBase,
+)
+from .responder import IResponder
+from .permission_info import IPermissionInfo
 
 from .hardcoded import (
     NETCODE_REQUEST_POWER_DEVICE_STATUS,
@@ -6,36 +18,37 @@ from .hardcoded import (
     NETCODE_REPLY_POWER_DEVICE_STATUS_OK,
     POWER_DEVICE_STATUS_REQUEST_TIMEOUT,
 )
-from .networking import NetworkingMessage
+from .networking_framework import NetworkingMessage, NetworkingHandler
 from .main_convenience import get_future_time
-from .commands import (
-    simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
-    CommandsRegistry,
-    CallContextGrand,
-)
-from .responder import IResponder
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
 
 NAME: str = "testpowerdeviceconnectionrequest"
 
 
-class CommandCallTestPowerDeviceConnectionRequest(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-    )
+@dataclass(frozen=True, slots=True)
+class CommandInvocationTestPowerDeviceConnectionRequest:
+    pass
 
-    responder: IResponder
-    call_context_grand: CallContextGrand
+
+class CommandCallTestPowerDeviceConnectionRequest(
+    CommandCallBase[CommandInvocationTestPowerDeviceConnectionRequest]
+):
+    networking_handler: NetworkingHandler
 
     def __init__(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self,
+        invocation: CommandInvocationTestPowerDeviceConnectionRequest,
+        responder: IResponder,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        networking_handler: NetworkingHandler,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
+        self.networking_handler = networking_handler
 
     async def call(self) -> None:
         await self.responder.respond("Trying")
@@ -45,8 +58,8 @@ class CommandCallTestPowerDeviceConnectionRequest(ICommandCall):
             is_reply=False,
             expiration=get_future_time(POWER_DEVICE_STATUS_REQUEST_TIMEOUT),
         )
-        reply: NetworkingMessage | None = (
-            await self.call_context_grand.networking_handler.request(msg=msg_request)
+        reply: NetworkingMessage | None = await self.networking_handler.request(
+            msg=msg_request
         )
         if reply is None:
             await self.responder.respond("Timed out")
@@ -60,37 +73,61 @@ class CommandCallTestPowerDeviceConnectionRequest(ICommandCall):
         await self.responder.respond(f"Got unknown code ({reply.code})")
 
 
-class CommandInvocationTestPowerDeviceConnectionRequest(ICommandInvocationStandard):
-    __slots__ = ()
+class CommandCallerTestPowerDeviceConnectionRequest(
+    CommandCallerBase[CommandInvocationTestPowerDeviceConnectionRequest]
+):
+    networking_handler: NetworkingHandler
 
-    def __init__(self) -> None:
-        pass
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        networking_handler: NetworkingHandler,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
+        )
+        self.networking_handler = networking_handler
+
+    def make_invocation(
+        self,
+    ) -> tuple[
+        "CommandCallerTestPowerDeviceConnectionRequest",
+        CommandInvocationTestPowerDeviceConnectionRequest,
+    ]:
+        return (self, CommandInvocationTestPowerDeviceConnectionRequest())
 
     def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self,
+        invocation: CommandInvocationTestPowerDeviceConnectionRequest,
+        responder: IResponder,
     ) -> CommandCallTestPowerDeviceConnectionRequest:
         return CommandCallTestPowerDeviceConnectionRequest(
-            responder=responder, call_context_grand=call_context_grand
+            invocation=invocation,
+            responder=responder,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+            networking_handler=self.networking_handler,
         )
-
-    def get_default_respect_locks(self) -> bool:
-        return False
-
-
-def invoke_testpowerdeviceconnectionrequest() -> (
-    CommandInvocationTestPowerDeviceConnectionRequest
-):
-    return CommandInvocationTestPowerDeviceConnectionRequest()
 
 
 def setup_cmd_testpowerdeviceconnectionrequest(
-    commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
+    commands_registry: CommandsRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
+    networking_handler: NetworkingHandler,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
+    caller: CommandCallerTestPowerDeviceConnectionRequest = (
+        CommandCallerTestPowerDeviceConnectionRequest(
+            locking_component=locking_component,
+            permission_info=permission_info,
+            networking_handler=networking_handler,
+        )
+    )
 
     command: click.Command = click.Command(
         name=NAME,
-        callback=invoke_testpowerdeviceconnectionrequest,
+        callback=caller.make_invocation,
         add_help_option=False,
     )
 
@@ -98,5 +135,4 @@ def setup_cmd_testpowerdeviceconnectionrequest(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

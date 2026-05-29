@@ -2,11 +2,15 @@ from abc import ABC, abstractmethod
 import logging
 
 
-class MinecraftRamCounterCannotAllocateError(Exception):
+class MinecraftRamCounterError(Exception):
     pass
 
 
-class MinecraftRamCounterCannotDeallocateError(Exception):
+class MinecraftRamCounterCannotAllocateError(MinecraftRamCounterError):
+    pass
+
+
+class MinecraftRamCounterCannotDeallocateError(MinecraftRamCounterError):
     pass
 
 

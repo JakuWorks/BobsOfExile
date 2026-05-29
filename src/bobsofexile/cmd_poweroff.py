@@ -1,8 +1,19 @@
+from dataclasses import dataclass
 import logging
 import time
 from collections.abc import Sequence
 
 import asyncclick as click
+
+from .commands import (
+    simple_setup_cmd,
+    ILockingComponent,
+    CommandsRegistry,
+    CommandCallBase,
+    CommandCallerBase,
+)
+from .responder import IResponder, ILongResponse
+from .permission_info import IPermissionInfo
 
 from .hardcoded import (
     POWEROFF_WAIT_TIME_SECONDS,
@@ -17,39 +28,44 @@ from .hardcoded import (
     NETCODE_REQUEST_POWER_DEVICE_STATUS,
     POWER_DEVICE_STATUS_REQUEST_TIMEOUT,
 )
-
-from .networking import NetworkingMessage
-from .minecraft import MinecraftInstanceEntry, stop_ensured_many_entries
+from .networking_framework import NetworkingMessage, NetworkingHandler
+from .minecraft import (
+    MinecraftInstanceEntry,
+    stop_ensured_many_entries,
+    MinecraftManager,
+)
 from .os_management import graceful_shutdown_linux
 from .main_convenience import get_future_time
-from .commands import (
-    simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
-    CallContextGrand,
-    CommandsRegistry,
-)
-from .responder import IResponder, ILongResponse
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
 
 NAME: str = "poweroff"
 
 
-class CommandCallPoweroff(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-    )
+@dataclass(frozen=True, slots=True)
+class CommandInvocationPoweroff:
+    pass
 
-    responder: IResponder
-    call_context_grand: CallContextGrand
+
+class CommandCallPoweroff(CommandCallBase[CommandInvocationPoweroff]):
+    minecraft_manager: MinecraftManager
+    networking_handler: NetworkingHandler
 
     def __init__(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self,
+        invocation: CommandInvocationPoweroff,
+        responder: IResponder,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        minecraft_manager: MinecraftManager,
+        networking_handler: NetworkingHandler,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
+        self.minecraft_manager = minecraft_manager
+        self.networking_handler = networking_handler
 
     async def call(self) -> None:
         # fmt: off
@@ -74,13 +90,6 @@ class CommandCallPoweroff(ICommandCall):
         msg_poweroff_request_unknown: str = f"Power off request's reply is unknown and not understood by this program... The client MAY OR MAY NOT be powered off."
         # fmt: on
 
-        if self.call_context_grand.minecraft_manager is None:
-            await self.responder.respond(
-                "There is no minecraft manager, cannot proceed."
-            )
-            # Poweroff is client-only so this indicates a bug (I'd rather have it fail early)
-            return
-
         message: ILongResponse = self.responder.new_long_response(init_msg=msg_begin)
         logging.info(msg_begin)
         await message.start()
@@ -95,7 +104,7 @@ class CommandCallPoweroff(ICommandCall):
             expiration=get_future_time(POWER_DEVICE_STATUS_REQUEST_TIMEOUT),
         )
         power_device_test_response: NetworkingMessage | None = (
-            await self.call_context_grand.networking_handler.request(device_test_msg)
+            await self.networking_handler.request(device_test_msg)
         )
         if power_device_test_response is None:
             logging.info(msg_device_test_timed_out)
@@ -114,7 +123,7 @@ class CommandCallPoweroff(ICommandCall):
             return
 
         running_entries: Sequence[MinecraftInstanceEntry] = (
-            self.call_context_grand.minecraft_manager.get_running_entries()
+            self.minecraft_manager.get_running_entries()
         )
         if running_entries:
             # fmt: off
@@ -162,7 +171,7 @@ class CommandCallPoweroff(ICommandCall):
             expiration=get_future_time(POWEROFF_REQUEST_TIMEOUT),
         )
         poweroff_response: NetworkingMessage | None = (
-            await self.call_context_grand.networking_handler.request(poweroff_request)
+            await self.networking_handler.request(poweroff_request)
         )
         if poweroff_response is None:
             await message.add_line(msg_poweroff_request_timed_out)
@@ -200,39 +209,63 @@ class CommandCallPoweroff(ICommandCall):
         graceful_shutdown_linux()
 
 
-class CommandInvocationPoweroff(ICommandInvocationStandard):
-    __slots__ = ()
+class CommandCallerPoweroff(CommandCallerBase[CommandInvocationPoweroff]):
+    minecraft_manager: MinecraftManager
+    networking_handler: NetworkingHandler
 
-    def __init__(self) -> None:
-        pass
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        minecraft_manager: MinecraftManager,
+        networking_handler: NetworkingHandler,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
+        )
+        self.minecraft_manager = minecraft_manager
+        self.networking_handler = networking_handler
+
+    def make_invocation(
+        self,
+    ) -> tuple["CommandCallerPoweroff", CommandInvocationPoweroff]:
+        return (self, CommandInvocationPoweroff())
 
     def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self, invocation: CommandInvocationPoweroff, responder: IResponder
     ) -> CommandCallPoweroff:
         return CommandCallPoweroff(
-            responder=responder, call_context_grand=call_context_grand
+            invocation=invocation,
+            responder=responder,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+            minecraft_manager=self.minecraft_manager,
+            networking_handler=self.networking_handler,
         )
-
-    def get_default_respect_locks(self) -> bool:
-        return True
-
-
-def invoke_poweroff() -> CommandInvocationPoweroff:
-    return CommandInvocationPoweroff()
 
 
 def setup_cmd_poweroff(
-    commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
+    commands_registry: CommandsRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
+    minecraft_manager: MinecraftManager,
+    networking_handler: NetworkingHandler,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_trusted_permission_info()
+    caller: CommandCallerPoweroff = CommandCallerPoweroff(
+        locking_component=locking_component,
+        permission_info=permission_info,
+        minecraft_manager=minecraft_manager,
+        networking_handler=networking_handler,
+    )
 
     command: click.Command = click.Command(
-        name=NAME, callback=invoke_poweroff, add_help_option=False
+        name=NAME,
+        callback=caller.make_invocation,
+        add_help_option=False,
     )
 
     simple_setup_cmd(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

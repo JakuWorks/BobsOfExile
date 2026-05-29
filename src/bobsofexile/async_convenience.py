@@ -200,7 +200,11 @@ async def wrap_coroutine_with_done_event(
         raise
 
 
-class NonstructuralTaskGroupNoTasksError(Exception):
+class NonstructuralTaskGroupError(Exception):
+    pass
+
+
+class NonstructuralTaskGroupNoTasksError(NonstructuralTaskGroupError):
     pass
 
 

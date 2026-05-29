@@ -21,15 +21,18 @@ from .cmd_testping import setup_cmd_testping
 
 from .async_convenience import wrap_error_logging
 from .ranks import RanksRegistry
-from .commands import CommandsRegistry, CallContextGrand
+from .commands import CommandsRegistry, LockingComponentDummy, LockingComponentStandard
+from .permission_info import PermissionInfoDummy
 from .ranks import RanksRegistry, owners_from_environment, trusted_from_environment
 from .bot import Bot
-from .networking import (
+from .networking_framework import (
     NetworkingHandler,
     ReplyDispatcher,
     RequestReplier,
-    LazySocket,
     ILazySocket,
+)
+from .networking_socket import (
+    LazySocket,
     IOneTimeLazySocketCloner,
     OneTimeLazySocketCloner,
 )
@@ -85,7 +88,7 @@ from .main_convenience import (
     get_env_or_error_bool,
     get_env_or_error_int_positive,
 )
-from .networking import check_is_reachable
+from .net_convenience import check_is_reachable
 
 
 async def main_client() -> None:
@@ -116,7 +119,7 @@ async def main_client() -> None:
     from .cmd_debug_setupsimplenetcodereplier import (
         setup_cmd_debug_setupsimplenetcodereplier,
     )
-    from .cmd_poweroff import setup_cmd_poweroff
+    from .cmd_poweroff import setup_cmd_poweroff, CommandCallerPoweroff
 
     from .cmd_testpowerdeviceconnectionrequest import (
         setup_cmd_testpowerdeviceconnectionrequest,
@@ -138,7 +141,7 @@ async def main_client() -> None:
     idling_manager_interval_seconds: float = get_env_or_error_float_positive(ENV_KEY_IDLING_MANAGER_INTERVAL_SECONDS)
     # fmt: on
 
-    # For tasks created directly in main (so they don't get GCd)
+    # Keeping references of tasks created directly in main (so they don't get GCd)
     tasks_in_main: MutableSequence[asyncio.Task[None]] = []
 
     zmq_context: zmq.asyncio.Context = zmq.asyncio.Context()
@@ -158,17 +161,27 @@ async def main_client() -> None:
         requesting_and_replying_url=client_connect_url,
     )
     sock_lazy: ILazySocket = LazySocket(cloner=one_time_lazy_sock_cloner)
-    await sock_lazy.start()
+    sock_lazy.start()
 
     networking_handler: NetworkingHandler = NetworkingHandler(
         reply_dispatcher=reply_dispatcher,
         request_replier=request_replier,
         sock_lazy=sock_lazy,
     )
-    await networking_handler.start()
 
-    ping_pong_responder: PingPongResponder = PingPongResponder()
-    ping_pong_responder.start(networking_handler=networking_handler)
+    tasks_in_main.append(
+        asyncio.create_task(
+            wrap_error_logging(
+                networking_handler.start(),
+                on_error_msg="Networking handler finished with an error",
+            )
+        )
+    )
+
+    ping_pong_responder: PingPongResponder = PingPongResponder(
+        networking_handler=networking_handler
+    )
+    ping_pong_responder.start()
 
     minecraft_ram_counter: IMinecraftRamCounter
     if minecraft_ram_counting_enable:
@@ -213,53 +226,48 @@ async def main_client() -> None:
     ranks_registry.add_trusted(trusted_from_environment())
     ranks_registry.add_owners(owners_from_environment())
 
-    commands_lock: asyncio.Lock = asyncio.Lock()
+    commands_lock_main: asyncio.Lock = asyncio.Lock()
+    locking_component_main: LockingComponentStandard = LockingComponentStandard(
+        commands_lock_main
+    )
+    locking_component_dummy: LockingComponentDummy = LockingComponentDummy()
 
     group_registry: click.Group = click.Group()
     click.pass_context(group_registry)
 
-    call_context_grand = CallContextGrand(
-        client_power_controller=None,
-        commands_lock=commands_lock,
-        commands_registry=None,
-        minecraft_manager=minecraft_manager,
-        networking_handler=networking_handler,
-    )
-
-    commands_registry: CommandsRegistry = CommandsRegistry(
-        group=group_registry, call_context_grand=call_context_grand
-    )
-
-    call_context_grand.commands_registry = commands_registry
+    commands_registry: CommandsRegistry = CommandsRegistry(group=group_registry)
 
     # fmt: off
-    setup_cmd_test(commands_registry, ranks_registry)
-    setup_cmd_testarg(commands_registry, ranks_registry)
-    setup_cmd_testblocking(commands_registry, ranks_registry)
-    setup_cmd_testerror(commands_registry, ranks_registry)
-    setup_cmd_testpermissions(commands_registry, ranks_registry)
-    setup_cmd_teststream(commands_registry, ranks_registry)
-    setup_cmd_testping(commands_registry, ranks_registry)
+    setup_cmd_test(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+    setup_cmd_testarg(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+    setup_cmd_testblocking(locking_component=locking_component_main, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+    setup_cmd_testerror(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+    setup_cmd_testpermissions(locking_component=locking_component_dummy, permission_info=ranks_registry.get_no_one_permission_info(), commands_registry=commands_registry)
+    setup_cmd_teststream(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+    setup_cmd_testping(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry, networking_handler=networking_handler)
 
-    setup_cmd_testpowerdeviceconnectionrequest(commands_registry, ranks_registry)
+    setup_cmd_testpowerdeviceconnectionrequest(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry, networking_handler=networking_handler)
 
-    setup_cmd_help(commands_registry, ranks_registry)
-    setup_cmd_debug_sendnetrequest(commands_registry, ranks_registry)
-    setup_cmd_debug_setupsimplenetcodereplier(commands_registry, ranks_registry)
+    setup_cmd_debug_sendnetrequest(locking_component=locking_component_dummy, permission_info=ranks_registry.get_owner_permission_info(), commands_registry=commands_registry, networking_handler=networking_handler)
+    setup_cmd_debug_setupsimplenetcodereplier(locking_component=locking_component_dummy, permission_info=ranks_registry.get_owner_permission_info(), commands_registry=commands_registry, networking_handler=networking_handler)
 
-    setup_cmd_poweroff(commands_registry, ranks_registry)
-    setup_cmd_serverstart(commands_registry, ranks_registry, default_target=minecraft_commands_default_target)
-    setup_cmd_servercmd(commands_registry, ranks_registry, default_target=minecraft_commands_default_target)
-    setup_cmd_serverview(commands_registry, ranks_registry, default_target=minecraft_commands_default_target)
-    setup_cmd_serverstatus(commands_registry, ranks_registry)
-    setup_cmd_serverstop(commands_registry, ranks_registry, default_target=minecraft_commands_default_target)
+    setup_cmd_help(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+
+    setup_cmd_poweroff(locking_component=locking_component_main, permission_info=ranks_registry.get_trusted_permission_info(), commands_registry=commands_registry, minecraft_manager=minecraft_manager, networking_handler=networking_handler)
+    
+    setup_cmd_serverstart(locking_component=locking_component_main, permission_info=ranks_registry.get_trusted_permission_info(), commands_registry=commands_registry, default_target=minecraft_commands_default_target, minecraft_manager=minecraft_manager)
+    setup_cmd_serverstop(locking_component=locking_component_main, permission_info=ranks_registry.get_trusted_permission_info(), commands_registry=commands_registry, default_target=minecraft_commands_default_target, minecraft_manager=minecraft_manager)
+    setup_cmd_servercmd(locking_component=locking_component_main, permission_info=ranks_registry.get_trusted_permission_info(), commands_registry=commands_registry, default_target=minecraft_commands_default_target, minecraft_manager=minecraft_manager)
+    setup_cmd_serverview(locking_component=locking_component_dummy, permission_info=ranks_registry.get_trusted_permission_info(), commands_registry=commands_registry, default_target=minecraft_commands_default_target, minecraft_manager=minecraft_manager)
+    setup_cmd_serverstatus(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry, minecraft_manager=minecraft_manager)
     # fmt: on
 
     token: str = get_env_or_error(ENV_KEY_TOKEN)
     bot_prefix: str = get_env_or_error(ENV_KEY_BOT_PREFIX)
     bot_status: str | None = get_env_or_error(ENV_KEY_BOT_STATUS)
 
-    bot: Bot = Bot(bot_prefix, registry=commands_registry, status=bot_status)
+    bot: Bot = Bot(prefix=bot_prefix, registry=commands_registry, status=bot_status)
+    bot.setup_events()
     logging.info("Bot logging in")
     await bot.login(token=token)
     logging.info("Bot connecting")
@@ -273,11 +281,18 @@ async def main_client() -> None:
             client=bot.client
         )
 
+        idling_manager_poweroff_caller: CommandCallerPoweroff = CommandCallerPoweroff(
+            locking_component=locking_component_main,
+            permission_info=PermissionInfoDummy(),
+            minecraft_manager=minecraft_manager,
+            networking_handler=networking_handler,
+        )
+
         idling_manager: IdlingManager = IdlingManager(
             interval=idling_manager_interval_seconds,
-            responder=default_discord_responder,
             minecraft_manager=minecraft_manager,
-            call_context_grand=call_context_grand,
+            responder=default_discord_responder,
+            poweroff_caller=idling_manager_poweroff_caller,
         )
         tasks_in_main.append(asyncio.create_task(idling_manager.start()))
 
@@ -297,7 +312,7 @@ async def main_server() -> None:
     from .cmd_dangerous_instant_poweroff import setup_cmd_dangerous_instant_poweroff
 
     from .os_management import ShutdownResponder, PowerDeviceStatusResponder
-    from .power_device import PowerController
+    from .power_device import IPowerController
     from .power_device_tinytuya import TuyaPowerController
 
     from .cmd_testpowerdeviceconnection import setup_cmd_testpowerdeviceconnection
@@ -317,13 +332,16 @@ async def main_server() -> None:
     tuya_device_id: str = get_env_or_error(ENV_KEY_TUYA_DEVICE_ID)
     # fmt: on
 
+    # Keeping references of tasks created directly in main (so they don't get GCd)
+    tasks_in_main: MutableSequence[asyncio.Task[None]] = []
+
     tuya_power_on_command: Mapping[Any, Any] = TUYA_POWER_ON_CMD
     tuya_power_off_command: Mapping[Any, Any] = TUYA_POWER_OFF_CMD
 
     tuya_cloud: tinytuya.Cloud = tinytuya.Cloud(
         apiRegion=tuya_region, apiKey=tuya_access_id, apiSecret=tuya_access_secret
     )
-    client_power_controller: PowerController = TuyaPowerController(
+    client_power_controller: IPowerController = TuyaPowerController(
         cloud=tuya_cloud,
         device_id=tuya_device_id,
         power_on_command=tuya_power_on_command,
@@ -346,26 +364,39 @@ async def main_server() -> None:
         heartbeat_timeout=NET_HEARTBEAT_TIMEOUT_MS,
     )
     sock_lazy: ILazySocket = LazySocket(cloner=one_time_lazy_sock_cloner)
-    await sock_lazy.start()
+    sock_lazy.start()
 
     networking_handler: NetworkingHandler = NetworkingHandler(
         reply_dispatcher=reply_dispatcher,
         request_replier=request_replier,
         sock_lazy=sock_lazy,
     )
-    await networking_handler.start()
+    tasks_in_main.append(
+        asyncio.create_task(
+            wrap_error_logging(
+                networking_handler.start(),
+                on_error_msg="Networking handler finished with an error",
+            )
+        )
+    )
 
-    ping_pong_responder: PingPongResponder = PingPongResponder()
-    ping_pong_responder.start(networking_handler=networking_handler)
+    ping_pong_responder: PingPongResponder = PingPongResponder(
+        networking_handler=networking_handler
+    )
+    ping_pong_responder.start()
 
     shutdown_responder: ShutdownResponder = ShutdownResponder(
+        networking_handler=networking_handler,
         client_power_controller=client_power_controller,
         sleeping_time_after_request=POWEROFF_WAIT_TIME_SECONDS,
     )
     shutdown_responder.start(networking_handler=networking_handler)
 
     power_device_status_responder: PowerDeviceStatusResponder = (
-        PowerDeviceStatusResponder(client_power_controller=client_power_controller)
+        PowerDeviceStatusResponder(
+            networking_handler=networking_handler,
+            client_power_controller=client_power_controller,
+        )
     )
     power_device_status_responder.start(networking_handler=networking_handler)
 
@@ -373,49 +404,43 @@ async def main_server() -> None:
     ranks_registry.add_trusted(trusted_from_environment())
     ranks_registry.add_owners(owners_from_environment())
 
-    commands_lock: asyncio.Lock = asyncio.Lock()
+    commands_lock_main: asyncio.Lock = asyncio.Lock()
+    locking_component_main: LockingComponentStandard = LockingComponentStandard(
+        commands_lock_main
+    )
+    locking_component_dummy: LockingComponentDummy = LockingComponentDummy()
 
     group_registry: click.Group = click.Group()
 
-    call_context_grand = CallContextGrand(
-        commands_registry=None,
-        minecraft_manager=None,
-        networking_handler=networking_handler,
-        client_power_controller=client_power_controller,
-        commands_lock=commands_lock,
-    )
-
-    commands_registry: CommandsRegistry = CommandsRegistry(
-        group=group_registry, call_context_grand=call_context_grand
-    )
-
-    call_context_grand.commands_registry = commands_registry
+    commands_registry: CommandsRegistry = CommandsRegistry(group=group_registry)
 
     # fmt: off
-    setup_cmd_test(commands_registry, ranks_registry)
-    setup_cmd_testarg(commands_registry, ranks_registry)
-    setup_cmd_testblocking(commands_registry, ranks_registry)
-    setup_cmd_testerror(commands_registry, ranks_registry)
-    setup_cmd_testpermissions(commands_registry, ranks_registry)
-    setup_cmd_teststream(commands_registry, ranks_registry)
-    setup_cmd_testping(commands_registry, ranks_registry)
+    setup_cmd_test(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+    setup_cmd_testarg(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+    setup_cmd_testblocking(locking_component=locking_component_main, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+    setup_cmd_testerror(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+    setup_cmd_testpermissions(locking_component=locking_component_dummy, permission_info=ranks_registry.get_no_one_permission_info(), commands_registry=commands_registry)
+    setup_cmd_teststream(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+    setup_cmd_testping(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry, networking_handler=networking_handler)
 
-    setup_cmd_testpowerdeviceconnection(commands_registry, ranks_registry)
+    setup_cmd_testpowerdeviceconnection(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry, client_power_controller=client_power_controller)
 
-    setup_cmd_help(commands_registry, ranks_registry)
-    setup_cmd_debug_sendnetrequest(commands_registry, ranks_registry)
-    setup_cmd_debug_setupsimplenetcodereplier(commands_registry, ranks_registry)
+    setup_cmd_help(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry)
+    setup_cmd_debug_sendnetrequest(locking_component=locking_component_dummy, permission_info=ranks_registry.get_owner_permission_info(), commands_registry=commands_registry, networking_handler=networking_handler)
+    setup_cmd_debug_setupsimplenetcodereplier(locking_component=locking_component_dummy, permission_info=ranks_registry.get_owner_permission_info(), commands_registry=commands_registry, networking_handler=networking_handler)
 
-    setup_cmd_poweron(commands_registry, ranks_registry)
-    setup_cmd_powerstatus(commands_registry, ranks_registry)
-    setup_cmd_dangerous_instant_poweroff(commands_registry, ranks_registry)
+    setup_cmd_poweron(locking_component=locking_component_main, permission_info=ranks_registry.get_trusted_permission_info(), commands_registry=commands_registry, client_power_controller=client_power_controller)
+    setup_cmd_powerstatus(locking_component=locking_component_dummy, permission_info=ranks_registry.get_everyone_permission_info(), commands_registry=commands_registry, client_power_controller=client_power_controller)
+
+    setup_cmd_dangerous_instant_poweroff(locking_component=locking_component_main, permission_info=ranks_registry.get_trusted_permission_info(), commands_registry=commands_registry, client_power_controller=client_power_controller, networking_handler=networking_handler)
     # fmt: on
 
     token: str = get_env_or_error(ENV_KEY_TOKEN)
     bot_prefix: str = get_env_or_error(ENV_KEY_BOT_PREFIX)
     bot_status: str | None = get_env_or_error(ENV_KEY_BOT_STATUS)
 
-    bot: Bot = Bot(bot_prefix, registry=commands_registry, status=bot_status)
+    bot: Bot = Bot(prefix=bot_prefix, registry=commands_registry, status=bot_status)
+    bot.setup_events()
     logging.info("Bot logging in")
     await bot.login(token=token)
     logging.info("Bot connecting")

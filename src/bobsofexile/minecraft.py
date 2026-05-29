@@ -45,22 +45,27 @@ from .minecraft_ram import IMinecraftRamCounter, IReadableMinecraftRamCounter
 # TODO Add public named constants for startup phases and use them everywhere instead
 
 
-class OneTimeMinecraftInstanceError(Exception): # fmt: skip
+class MinecraftError(Exception):
     pass
 
 
-class OneTimeMinecraftInstanceInvalidStateError(OneTimeMinecraftInstanceError): # fmt: skip
-    pass
-
-class OneTimeMinecraftInstanceExecutableMissingError(OneTimeMinecraftInstanceError): # fmt: skip
+class OneTimeMinecraftInstanceError(MinecraftError):
     pass
 
 
-class OneTimeMinecraftInstanceMissingStdinError(OneTimeMinecraftInstanceError): # fmt: skip
+class OneTimeMinecraftInstanceInvalidStateError(OneTimeMinecraftInstanceError):
     pass
 
 
-class OneTimeMinecraftInstanceMissingStdoutError(OneTimeMinecraftInstanceError): # fmt: skip
+class OneTimeMinecraftInstanceExecutableMissingError(OneTimeMinecraftInstanceError):
+    pass
+
+
+class OneTimeMinecraftInstanceMissingStdinError(OneTimeMinecraftInstanceError):
+    pass
+
+
+class OneTimeMinecraftInstanceMissingStdoutError(OneTimeMinecraftInstanceError):
     pass
 
 
@@ -759,16 +764,19 @@ class OneTimeMinecraftInstance:
             raise OneTimeMinecraftInstanceInvalidStateError("Startup phase must >= 3")
 
 
-class MinecraftInstanceEntryError(Exception): # fmt: skip
+class MinecraftInstanceEntryError(MinecraftError):
     pass
 
-class MinecraftInstanceEntryInvalidStateError(MinecraftInstanceEntryError): # fmt: skip
+
+class MinecraftInstanceEntryInvalidStateError(MinecraftInstanceEntryError):
     pass
+
 
 class MinecraftInstanceEntryAlreadyRunningError(MinecraftInstanceEntryInvalidStateError): # fmt: skip
     pass
 
-class MinecraftInstanceEntryNotRunningError(MinecraftInstanceEntryInvalidStateError): # fmt: skip
+
+class MinecraftInstanceEntryNotRunningError(MinecraftInstanceEntryInvalidStateError):
     pass
 
 
@@ -1125,7 +1133,7 @@ async def entry_stop_featureful(entry: MinecraftInstanceEntry) -> None:
     await entry.get_running().wait_false()
 
 
-class MinecraftManagerError(Exception):
+class MinecraftManagerError(MinecraftError):
     pass
 
 

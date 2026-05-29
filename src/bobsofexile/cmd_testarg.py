@@ -1,93 +1,88 @@
+from dataclasses import dataclass
 import logging
 
 import asyncclick as click
 
 from .commands import (
     simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
+    ILockingComponent,
     CommandsRegistry,
-    CallContextGrand,
+    CommandCallBase,
+    CommandCallerBase,
 )
 from .responder import IResponder
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
+from .permission_info import IPermissionInfo
 
 NAME: str = "testarg"
 
 
-class CommandCallTestArg(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-        "testingargument",
-        "testingoption",
-    )
-
-    responder: IResponder
-    call_context_grand: CallContextGrand
-
+@dataclass(frozen=True, slots=True)
+class CommandInvocationTestArg:
     testingargument: str
     testingoption: str
 
+
+class CommandCallTestArg(CommandCallBase[CommandInvocationTestArg]):
     def __init__(
         self,
+        invocation: CommandInvocationTestArg,
         responder: IResponder,
-        call_context_grand: CallContextGrand,
-        testingargument: str,
-        testingoption: str,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
-
-        self.testingargument = testingargument
-        self.testingoption = testingoption
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
 
     async def call(self) -> None:
-        msg: str = f"Testing argument: {self.testingargument}\nTesting option: {self.testingoption}" # fmt: skip
+        msg: str = f"Testing argument: {self.invocation.testingargument}\nTesting option: {self.invocation.testingoption}" # fmt: skip
         await self.responder.respond(msg) # fmt: skip
         logging.info(msg)
 
 
-class CommandInvocationTestArg(ICommandInvocationStandard):
-    __slots__ = (
-        "testingargument",
-        "testingoption",
-    )
-
-    testingargument: str
-    testingoption: str
-
-    def __init__(self, testingargument: str, testingoption: str) -> None:
-        self.testingargument = testingargument
-        self.testingoption = testingoption
-
-    def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
-    ) -> CommandCallTestArg:
-        return CommandCallTestArg(
-            responder=responder,
-            call_context_grand=call_context_grand,
-            testingargument=self.testingargument,
-            testingoption=self.testingoption,
+class CommandCallerTestArg(CommandCallerBase[CommandInvocationTestArg]):
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
         )
 
-    def get_default_respect_locks(self) -> bool:
-        return False
+    def make_invocation(
+        self, testingargument: str, testingoption: str
+    ) -> tuple["CommandCallerTestArg", CommandInvocationTestArg]:
+        return (
+            self,
+            CommandInvocationTestArg(
+                testingargument=testingargument, testingoption=testingoption
+            ),
+        )
 
-
-def invoke_testarg(
-    testingargument: str, testingoption: str
-) -> CommandInvocationTestArg:
-    return CommandInvocationTestArg(
-        testingargument=testingargument, testingoption=testingoption
-    )
+    def make_call(
+        self, invocation: CommandInvocationTestArg, responder: IResponder
+    ) -> CommandCallTestArg:
+        return CommandCallTestArg(
+            invocation=invocation,
+            responder=responder,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+        )
 
 
 def setup_cmd_testarg(
-    commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
+    commands_registry: CommandsRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
+    caller: CommandCallerTestArg = CommandCallerTestArg(
+        locking_component=locking_component,
+        permission_info=permission_info,
+    )
 
     params: list[click.Parameter] = [
         click.Argument(["testingargument"], type=str, required=True),
@@ -99,12 +94,14 @@ def setup_cmd_testarg(
         ),
     ]
     command: click.Command = click.Command(
-        name=NAME, callback=invoke_testarg, add_help_option=False, params=params
+        name=NAME,
+        callback=caller.make_invocation,
+        add_help_option=False,
+        params=params,
     )
 
     simple_setup_cmd(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

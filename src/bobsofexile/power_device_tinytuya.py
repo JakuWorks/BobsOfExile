@@ -14,15 +14,16 @@ from .hardcoded import (
     TUYA_RESPONSE_STATUS_KEY_SUCCESS,
 )
 from .power_device import (
-    PowerController,
+    IPowerController,
     PowerDeviceCommandResponse,
     PowerDeviceStatusResponse,
     PowerDeviceDetails,
     PowerDeviceConnectedResponse,
+    PowerDeviceProtocolError,
 )
 
 
-class WrongTuyaResponseFormatError(Exception):
+class WrongTuyaResponseFormatError(PowerDeviceProtocolError):
     pass
 
 
@@ -65,7 +66,7 @@ def get_connected_from_tuya_response(
     return PowerDeviceConnectedResponse(connected=connected)
 
 
-class TuyaPowerController(PowerController):
+class TuyaPowerController(IPowerController):
     """Power controller implementation for tuya"""
 
     __slots__ = (

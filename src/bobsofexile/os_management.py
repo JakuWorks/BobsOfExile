@@ -15,13 +15,12 @@ from .hardcoded import (
     NETCODE_REPLY_POWER_DEVICE_STATUS_NO,
     NETCODE_REPLY_POWER_DEVICE_STATUS_OK,
 )
-from .networking import (
+from .networking_framework import (
     RequestReplyContext,
     NetworkingMessage,
     NetworkingHandler,
-    RequestReplyContextYoung,
 )
-from .power_device import PowerController, PowerDeviceConnectedResponse
+from .power_device import IPowerController, PowerDeviceConnectedResponse
 
 
 def graceful_shutdown_linux() -> None:
@@ -33,43 +32,50 @@ def graceful_shutdown_linux() -> None:
 
 
 class ShutdownResponder:
-    """Meant for the server to act upon the client's requests to cut its power supply"""
+    """Meant for the server to act upon the client's requests"""
 
-    __slots__ = ("sleeping_time_after_request", "client_power_controller")
+    __slots__ = (
+        "sleeping_time_after_request",
+        "networking_handler",
+        "client_power_controller",
+    )
 
-    sleeping_time_after_request: int | float
-    client_power_controller: PowerController
+    sleeping_time_after_request: float
+    networking_handler: NetworkingHandler
+    client_power_controller: IPowerController
 
     def __init__(
         self,
-        sleeping_time_after_request: int | float,
-        client_power_controller: PowerController,
+        sleeping_time_after_request: float,
+        networking_handler: NetworkingHandler,
+        client_power_controller: IPowerController,
     ) -> None:
         self.sleeping_time_after_request = sleeping_time_after_request
+        self.networking_handler = networking_handler
         self.client_power_controller = client_power_controller
 
     def start(self, networking_handler: NetworkingHandler) -> None:
+        # TODO Ensure starting is only done once (possibly via a convenience base class?)
         logging.info("Adding client shutdown responder hook")
         networking_handler.request_replier.add_hook(
             code=NETCODE_REQUEST_POWEROFF_SOON,
             hook=self.shutdown_reply_hook,
             once=False,
-            ctx=RequestReplyContextYoung(networking_handler=networking_handler),
         )
 
     async def shutdown_reply_hook(self, ctx: RequestReplyContext) -> None:
         logging.info("Running reply hook for client shutdown request")
         msg_no: NetworkingMessage = NetworkingMessage(
             code=NETCODE_REPLY_POWEROFF_SOON_NO,
-            id=ctx.youngest.msg.id,
+            id=ctx.msg.id,
             is_reply=True,
-            expiration=ctx.youngest.msg.expiration,
+            expiration=ctx.msg.expiration,
         )
         msg_ok: NetworkingMessage = NetworkingMessage(
             code=NETCODE_REPLY_POWEROFF_SOON_OK,
-            id=ctx.youngest.msg.id,
+            id=ctx.msg.id,
             is_reply=True,
-            expiration=ctx.youngest.msg.expiration,
+            expiration=ctx.msg.expiration,
         )
 
         connected: PowerDeviceConnectedResponse | None = (
@@ -77,15 +83,13 @@ class ShutdownResponder:
         )
         if connected is None or not connected.connected:
             logging.info("No client shutdown due to failed device test")
-            await ctx.young.networking_handler.reply(msg_no)
+            await self.networking_handler.reply(msg_no)
             return
 
         logging.info("Yes client shutdown soon (device test successful)")
-        await ctx.young.networking_handler.reply(msg_ok)
+        await self.networking_handler.reply(msg_ok)
 
-        logging.info(
-            f"Sleeping for {self.sleeping_time_after_request} before client shutdown"
-        )
+        logging.info(f"Sleeping for {self.sleeping_time_after_request} before client shutdown") # fmt: skip
         await asyncio.sleep(self.sleeping_time_after_request)
 
         logging.info("Shutting down client (unless there's a failure)")
@@ -99,35 +103,44 @@ class ShutdownResponder:
 
 
 class PowerDeviceStatusResponder:
-    __slots__ = ("client_power_controller",)
+    __slots__ = (
+        "networking_handler",
+        "client_power_controller",
+    )
 
-    client_power_controller: PowerController
+    networking_handler: NetworkingHandler
+    client_power_controller: IPowerController
 
-    def __init__(self, client_power_controller: PowerController) -> None:
+    def __init__(
+        self,
+        networking_handler: NetworkingHandler,
+        client_power_controller: IPowerController,
+    ) -> None:
+        self.networking_handler = networking_handler
         self.client_power_controller = client_power_controller
 
     def start(self, networking_handler: NetworkingHandler) -> None:
+        # TODO Ensure starting is only done once (possibly via a convenience base class?)
         logging.info("Adding power device status responder hook")
         networking_handler.request_replier.add_hook(
             code=NETCODE_REQUEST_POWER_DEVICE_STATUS,
             hook=self.power_device_status_hook,
             once=False,
-            ctx=RequestReplyContextYoung(networking_handler=networking_handler),
         )
 
     async def power_device_status_hook(self, ctx: RequestReplyContext) -> None:
         logging.info("Running reply hook for power device status request")
         msg_no: NetworkingMessage = NetworkingMessage(
             code=NETCODE_REPLY_POWER_DEVICE_STATUS_NO,
-            id=ctx.youngest.msg.id,
+            id=ctx.msg.id,
             is_reply=True,
-            expiration=ctx.youngest.msg.expiration,
+            expiration=ctx.msg.expiration,
         )
         msg_ok: NetworkingMessage = NetworkingMessage(
             code=NETCODE_REPLY_POWER_DEVICE_STATUS_OK,
-            id=ctx.youngest.msg.id,
+            id=ctx.msg.id,
             is_reply=True,
-            expiration=ctx.youngest.msg.expiration,
+            expiration=ctx.msg.expiration,
         )
 
         connected: PowerDeviceConnectedResponse | None = (
@@ -135,7 +148,7 @@ class PowerDeviceStatusResponder:
         )
         if connected is not None and connected.connected:
             logging.info("Replying client power device OK")
-            await ctx.young.networking_handler.reply(msg_ok)
+            await self.networking_handler.reply(msg_ok)
         else:
             logging.info("Replying client power device NO")
-            await ctx.young.networking_handler.reply(msg_no)
+            await self.networking_handler.reply(msg_no)

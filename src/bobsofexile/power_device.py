@@ -2,6 +2,14 @@ import abc
 from typing import AsyncIterator
 
 
+class PowerDeviceError(Exception):
+    pass
+
+
+class PowerDeviceProtocolError(PowerDeviceError):
+    pass
+
+
 class PowerDeviceCommandResponse:
     __slots__ = ("success",)
 
@@ -42,7 +50,7 @@ class PowerDeviceDetails:
         self.connected = connected
 
 
-class PowerController(abc.ABC):
+class IPowerController(abc.ABC):
     """The errors returned by this interface depend on the used implementation!
     Some methods may be more efficient than others, it depends on the implementation"""
 

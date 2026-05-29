@@ -1,43 +1,52 @@
+from dataclasses import dataclass
 import logging
 
 import asyncclick as click
 
-from .power_device import PowerDeviceConnectedResponse
 from .commands import (
     simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
+    ILockingComponent,
     CommandsRegistry,
-    CallContextGrand,
+    CommandCallBase,
+    CommandCallerBase,
 )
 from .responder import IResponder
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
+from .permission_info import IPermissionInfo
+
+from .power_device import PowerDeviceConnectedResponse, IPowerController
 
 NAME: str = "testpowerdeviceconnection"
 
 
-class CommandCallTestPowerDeviceConnection(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-    )
+@dataclass(frozen=True, slots=True)
+class CommandInvocationTestPowerDeviceConnection:
+    pass
 
-    responder: IResponder
-    call_context_grand: CallContextGrand
+
+class CommandCallTestPowerDeviceConnection(
+    CommandCallBase[CommandInvocationTestPowerDeviceConnection]
+):
+    client_power_controller: IPowerController
 
     def __init__(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self,
+        invocation: CommandInvocationTestPowerDeviceConnection,
+        responder: IResponder,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        client_power_controller: IPowerController,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
+        self.client_power_controller = client_power_controller
 
     async def call(self) -> None:
-        if self.call_context_grand.client_power_controller is None:
-            await self.responder.respond("No power controller")
-            return
         connected: PowerDeviceConnectedResponse | None = (
-            await self.call_context_grand.client_power_controller.get_connected()
+            await self.client_power_controller.get_connected()
         )
         if connected is None:
             await self.responder.respond("Failed to retrieve connection status")
@@ -46,39 +55,66 @@ class CommandCallTestPowerDeviceConnection(ICommandCall):
         logging.info(f"Tested device connection ({connected.connected=})")
 
 
-class CommandInvocationTestPowerDeviceConnection(ICommandInvocationStandard):
-    __slots__ = ()
+class CommandCallerTestPowerDeviceConnection(
+    CommandCallerBase[CommandInvocationTestPowerDeviceConnection]
+):
+    client_power_controller: IPowerController
 
-    def __init__(self) -> None:
-        pass
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        client_power_controller: IPowerController,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
+        )
+        self.client_power_controller = client_power_controller
+
+    def make_invocation(
+        self,
+    ) -> tuple[
+        "CommandCallerTestPowerDeviceConnection",
+        CommandInvocationTestPowerDeviceConnection,
+    ]:
+        return (self, CommandInvocationTestPowerDeviceConnection())
 
     def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
+        self,
+        invocation: CommandInvocationTestPowerDeviceConnection,
+        responder: IResponder,
     ) -> CommandCallTestPowerDeviceConnection:
         return CommandCallTestPowerDeviceConnection(
-            responder=responder, call_context_grand=call_context_grand
+            invocation=invocation,
+            responder=responder,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+            client_power_controller=self.client_power_controller,
         )
-
-    def get_default_respect_locks(self) -> bool:
-        return False
-
-
-def invoke_testpowerdeviceconnection() -> CommandInvocationTestPowerDeviceConnection:
-    return CommandInvocationTestPowerDeviceConnection()
 
 
 def setup_cmd_testpowerdeviceconnection(
-    commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
+    commands_registry: CommandsRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
+    client_power_controller: IPowerController,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_everyone_permission_info()
+    caller: CommandCallerTestPowerDeviceConnection = (
+        CommandCallerTestPowerDeviceConnection(
+            locking_component=locking_component,
+            permission_info=permission_info,
+            client_power_controller=client_power_controller,
+        )
+    )
 
     command: click.Command = click.Command(
-        name=NAME, callback=invoke_testpowerdeviceconnection, add_help_option=False
+        name=NAME,
+        callback=caller.make_invocation,
+        add_help_option=False,
     )
 
     simple_setup_cmd(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

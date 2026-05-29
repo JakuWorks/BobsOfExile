@@ -1,143 +1,148 @@
-import logging
+from dataclasses import dataclass
 import asyncio
+import logging
 
 import asyncclick as click
 
-from .networking import NetworkingMessage, RequestReplyContext, RequestReplyContextYoung
-from .main_convenience import get_future_time
 from .commands import (
     simple_setup_cmd,
-    ICommandCall,
-    ICommandInvocationStandard,
-    CallContextGrand,
+    ILockingComponent,
     CommandsRegistry,
+    CommandCallBase,
+    CommandCallerBase,
 )
 from .responder import IResponder, ILongResponse
-from .permissions import IPermissionInfo
-from .ranks import RanksRegistry
+from .permission_info import IPermissionInfo
+
+from .networking_framework import (
+    NetworkingMessage,
+    RequestReplyContext,
+    NetworkingHandler,
+)
+from .main_convenience import get_future_time
 
 NAME: str = "debug_setupsimplenetcodereplier"
 
 
-class CommandCallDebugSetupSimpleNetCodeReplier(ICommandCall):
-    __slots__ = (
-        "responder",
-        "call_context_grand",
-        "listencode",
-        "replycode",
-        "timeout",
-    )
-
-    responder: IResponder
-    call_context_grand: CallContextGrand
-
+@dataclass(frozen=True, slots=True)
+class CommandInvocationDebugSetupSimpleNetCodeReplier:
     listencode: int
     replycode: int
     timeout: int
 
+
+class CommandCallDebugSetupSimpleNetCodeReplier(
+    CommandCallBase[CommandInvocationDebugSetupSimpleNetCodeReplier]
+):
+    networking_handler: NetworkingHandler
+
     def __init__(
         self,
+        invocation: CommandInvocationDebugSetupSimpleNetCodeReplier,
         responder: IResponder,
-        call_context_grand: CallContextGrand,
-        listencode: int,
-        replycode: int,
-        timeout: int,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        networking_handler: NetworkingHandler,
     ) -> None:
-        self.responder = responder
-        self.call_context_grand = call_context_grand
-
-        self.listencode = listencode
-        self.replycode = replycode
-        self.timeout = timeout
+        super().__init__(
+            invocation=invocation,
+            responder=responder,
+            locking_component=locking_component,
+            permission_info=permission_info,
+        )
+        self.networking_handler = networking_handler
 
     async def call(self) -> None:
-        logging.info(
-            f"Setting up a temporary debug net code replier {self.listencode=} {self.replycode=} {self.timeout=}" # fmt: skip
-        )
+        logging.info(f"Setting up a temporary debug net code replier {self.invocation.listencode=} {self.invocation.replycode=} {self.invocation.timeout=}") # fmt: skip
 
         message: ILongResponse = self.responder.new_long_response(
-            init_msg=f"Setting up a temporary debug simple net code replier {self.listencode=} {self.replycode=} that will be removed after {self.timeout=}",
+            init_msg=f"Setting up a temporary debug simple net code replier {self.invocation.listencode=} {self.invocation.replycode=} that will be removed after {self.invocation.timeout=}",
         )
         await message.start()
 
         async def reply_hook(request_reply_context: RequestReplyContext) -> None:
-            received_msg: NetworkingMessage = request_reply_context.youngest.msg
+            received_msg: NetworkingMessage = request_reply_context.msg
             reply_msg: NetworkingMessage = NetworkingMessage(
-                code=self.replycode,
+                code=self.invocation.replycode,
                 id=received_msg.id,
                 is_reply=True,
-                expiration=get_future_time(self.timeout),
+                expiration=get_future_time(self.invocation.timeout),
             )
 
             await message.add_line(
                 f"\nGot msg with {received_msg.code=} {received_msg.is_reply=} {received_msg.id=}"
                 f"\nReplying to it with {reply_msg.code=} {reply_msg.is_reply=} {reply_msg.id=} "
             )
-            await request_reply_context.young.networking_handler.reply(reply_msg)
+            await self.networking_handler.reply(reply_msg)
 
-        request_reply_context_young: RequestReplyContextYoung = (
-            RequestReplyContextYoung(
-                networking_handler=self.call_context_grand.networking_handler
-            )
-        )
-        self.call_context_grand.networking_handler.request_replier.add_hook(
-            code=self.listencode,
+        self.networking_handler.request_replier.add_hook(
+            code=self.invocation.listencode,
             hook=reply_hook,
             once=False,
-            ctx=request_reply_context_young,
         )
 
-        await asyncio.sleep(self.timeout)
+        await asyncio.sleep(self.invocation.timeout)
 
-        self.call_context_grand.networking_handler.request_replier.remove_hook(
-            code=self.listencode
+        self.networking_handler.request_replier.remove_hook(
+            code=self.invocation.listencode
         )
         await message.add_line("\nRemoved the simple net code replier hook (time out)")
 
 
-class CommandInvocationDebugSetupSimpleNetCodeReplier(ICommandInvocationStandard):
-    __slots__ = (
-        "listencode",
-        "replycode",
-        "timeout",
-    )
+class CommandCallerDebugSetupSimpleNetCodeReplier(
+    CommandCallerBase[CommandInvocationDebugSetupSimpleNetCodeReplier]
+):
+    networking_handler: NetworkingHandler
 
-    listencode: int
-    replycode: int
-    timeout: int
+    def __init__(
+        self,
+        locking_component: ILockingComponent,
+        permission_info: IPermissionInfo,
+        networking_handler: NetworkingHandler,
+    ) -> None:
+        super().__init__(
+            locking_component=locking_component, permission_info=permission_info
+        )
+        self.networking_handler = networking_handler
 
-    def __init__(self, listencode: int, replycode: int, timeout: int) -> None:
-        listencode = listencode
-        replycode = replycode
-        timeout = timeout
-
-    def make_call(
-        self, responder: IResponder, call_context_grand: CallContextGrand
-    ) -> CommandCallDebugSetupSimpleNetCodeReplier:
-        return CommandCallDebugSetupSimpleNetCodeReplier(
-            responder=responder,
-            call_context_grand=call_context_grand,
-            listencode=self.listencode,
-            replycode=self.replycode,
-            timeout=self.timeout,
+    def make_invocation(self, listencode: int, replycode: int, timeout: int) -> tuple[
+        "CommandCallerDebugSetupSimpleNetCodeReplier",
+        CommandInvocationDebugSetupSimpleNetCodeReplier,
+    ]:
+        return (
+            self,
+            CommandInvocationDebugSetupSimpleNetCodeReplier(
+                listencode=listencode, replycode=replycode, timeout=timeout
+            ),
         )
 
-    def get_default_respect_locks(self) -> bool:
-        return False
-
-
-def invoke_debug_setupsimplenetcodereplier(
-    listencode: int, replycode: int, timeout: int
-) -> CommandInvocationDebugSetupSimpleNetCodeReplier:
-    return CommandInvocationDebugSetupSimpleNetCodeReplier(
-        listencode=listencode, replycode=replycode, timeout=timeout
-    )
+    def make_call(
+        self,
+        invocation: CommandInvocationDebugSetupSimpleNetCodeReplier,
+        responder: IResponder,
+    ) -> CommandCallDebugSetupSimpleNetCodeReplier:
+        return CommandCallDebugSetupSimpleNetCodeReplier(
+            invocation=invocation,
+            responder=responder,
+            locking_component=self.locking_component,
+            permission_info=self.permission_info,
+            networking_handler=self.networking_handler,
+        )
 
 
 def setup_cmd_debug_setupsimplenetcodereplier(
-    commands_registry: CommandsRegistry, ranks_registry: RanksRegistry
+    commands_registry: CommandsRegistry,
+    locking_component: ILockingComponent,
+    permission_info: IPermissionInfo,
+    networking_handler: NetworkingHandler,
 ) -> None:
-    permission_info: IPermissionInfo = ranks_registry.get_owner_permission_info()
+    caller: CommandCallerDebugSetupSimpleNetCodeReplier = (
+        CommandCallerDebugSetupSimpleNetCodeReplier(
+            locking_component=locking_component,
+            permission_info=permission_info,
+            networking_handler=networking_handler,
+        )
+    )
 
     params: list[click.Parameter] = [
         click.Argument(["listencode"], type=int, required=True),
@@ -146,7 +151,7 @@ def setup_cmd_debug_setupsimplenetcodereplier(
     ]
     command: click.Command = click.Command(
         name=NAME,
-        callback=invoke_debug_setupsimplenetcodereplier,
+        callback=caller.make_invocation,
         add_help_option=False,
         params=params,
     )
@@ -155,5 +160,4 @@ def setup_cmd_debug_setupsimplenetcodereplier(
         name=NAME,
         click_command=command,
         commands_registry=commands_registry,
-        permission_info=permission_info,
     )

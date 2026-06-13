@@ -42,7 +42,7 @@ NAME: str = "poweroff"
 
 @dataclass(frozen=True, slots=True)
 class CommandInvocationPoweroff:
-    pass
+    only_shutdown: bool
 
 
 class CommandCallPoweroff(CommandCallBase[CommandInvocationPoweroff]):
@@ -87,40 +87,47 @@ class CommandCallPoweroff(CommandCallBase[CommandInvocationPoweroff]):
         msg_poweroff_request_timed_out: str = "Timed out without any response! The client WILL NOT be powered off.\n(note: if there was a network error that prevented us from getting the response then power supply will be cut soon even though the OS is running)"
         msg_poweroff_request_ok: str = f"Got OK from server (remote). The power WILL be cut in approximately {POWEROFF_WAIT_TIME_SECONDS} seconds."
         msg_poweroff_request_no: str = f"Got NO from server (remote). The client WILL NOT be powered off."
+        msg_poweroff_request_no_only_shutdown: str = "No attempts to request a delayed client poweroff from server or notify a power controller have been made due to the only shutdown mode."
         msg_poweroff_request_unknown: str = f"Power off request's reply is unknown and not understood by this program... The client MAY OR MAY NOT be powered off."
+
+        msg_poweroff_ok_only_shutdown: str = "The client's OS will shut down now."
         # fmt: on
 
         message: ILongResponse = self.responder.new_long_response(init_msg=msg_begin)
         logging.info(msg_begin)
         await message.start()
 
-        logging.info(msg_device_test)
-        await message.add_line(msg_device_test)
+        if not self.invocation.only_shutdown:
+            logging.info(msg_device_test)
+            await message.add_line(msg_device_test)
 
-        device_test_msg: NetworkingMessage = NetworkingMessage(
-            code=NETCODE_REQUEST_POWER_DEVICE_STATUS,
-            id=None,
-            is_reply=False,
-            expiration=get_future_time(POWER_DEVICE_STATUS_REQUEST_TIMEOUT),
-        )
-        power_device_test_response: NetworkingMessage | None = (
-            await self.networking_handler.request(device_test_msg)
-        )
-        if power_device_test_response is None:
-            logging.info(msg_device_test_timed_out)
-            await message.add_line(msg_device_test_timed_out)
+            device_test_msg: NetworkingMessage = NetworkingMessage(
+                code=NETCODE_REQUEST_POWER_DEVICE_STATUS,
+                id=None,
+                is_reply=False,
+                expiration=get_future_time(POWER_DEVICE_STATUS_REQUEST_TIMEOUT),
+            )
+            power_device_test_response: NetworkingMessage | None = (
+                await self.networking_handler.request(device_test_msg)
+            )
+            if power_device_test_response is None:
+                logging.info(msg_device_test_timed_out)
+                await message.add_line(msg_device_test_timed_out)
+                return
+            elif power_device_test_response.code == NETCODE_REPLY_POWER_DEVICE_STATUS_NO:
+                logging.info(msg_device_test_no)
+                await message.add_line(msg_device_test_no)
+                return
+            elif power_device_test_response.code == NETCODE_REPLY_POWER_DEVICE_STATUS_OK:
+                logging.info(msg_device_test_ok)
+                await message.add_line(msg_device_test_ok)
+            else:
+                logging.info(msg_device_test_unknown)
+                await message.add_line(msg_device_test_unknown)
             return
-        elif power_device_test_response.code == NETCODE_REPLY_POWER_DEVICE_STATUS_NO:
-            logging.info(msg_device_test_no)
-            await message.add_line(msg_device_test_no)
-            return
-        elif power_device_test_response.code == NETCODE_REPLY_POWER_DEVICE_STATUS_OK:
-            logging.info(msg_device_test_ok)
-            await message.add_line(msg_device_test_ok)
         else:
-            logging.info(msg_device_test_unknown)
-            await message.add_line(msg_device_test_unknown)
-            return
+            # No message for this case
+            pass
 
         running_entries: Sequence[MinecraftInstanceEntry] = (
             self.minecraft_manager.get_running_entries()
@@ -161,50 +168,54 @@ class CommandCallPoweroff(CommandCallBase[CommandInvocationPoweroff]):
             await message.add_line(msg_minecraft_not_running)
         # fmt: on
 
-        logging.info(msg_poweroff_request)
-        await message.add_line(msg_poweroff_request)
+        if not self.invocation.only_shutdown:
+            logging.info(msg_poweroff_request)
+            await message.add_line(msg_poweroff_request)
 
-        poweroff_request: NetworkingMessage = NetworkingMessage(
-            code=NETCODE_REQUEST_POWEROFF_SOON,
-            id=None,
-            is_reply=False,
-            expiration=get_future_time(POWEROFF_REQUEST_TIMEOUT),
-        )
-        poweroff_response: NetworkingMessage | None = (
-            await self.networking_handler.request(poweroff_request)
-        )
-        if poweroff_response is None:
-            await message.add_line(msg_poweroff_request_timed_out)
-            logging.info(msg_poweroff_request_timed_out)
-            return
-        elif poweroff_response.code == NETCODE_REPLY_POWEROFF_SOON_NO:
-            await message.add_line(msg_poweroff_request_no)
-            logging.info(msg_poweroff_request_no)
-            return
-        elif poweroff_response.code == NETCODE_REPLY_POWEROFF_SOON_OK:
-            logging.info(msg_poweroff_request_ok)
-            await message.add_line(msg_poweroff_request_ok)
+            poweroff_request: NetworkingMessage = NetworkingMessage(
+                code=NETCODE_REQUEST_POWEROFF_SOON,
+                id=None,
+                is_reply=False,
+                expiration=get_future_time(POWEROFF_REQUEST_TIMEOUT),
+            )
+            poweroff_response: NetworkingMessage | None = (
+                await self.networking_handler.request(poweroff_request)
+            )
+            if poweroff_response is None:
+                await message.add_line(msg_poweroff_request_timed_out)
+                logging.info(msg_poweroff_request_timed_out)
+                return
+            elif poweroff_response.code == NETCODE_REPLY_POWEROFF_SOON_NO:
+                await message.add_line(msg_poweroff_request_no)
+                logging.info(msg_poweroff_request_no)
+                return
+            elif poweroff_response.code == NETCODE_REPLY_POWEROFF_SOON_OK:
+                logging.info(msg_poweroff_request_ok)
+                await message.add_line(msg_poweroff_request_ok)
+            else:
+                logging.info(msg_poweroff_request_unknown)
+                await message.add_line(msg_poweroff_request_unknown)
+                return
+
+            # THIS ASSUMES THAT THE SERVER IS USING THE SAME WAIT TIME VALUE CONSTANT!!! (not guaranteed)
+            approximate_poweroff_timestamp: int = (
+                round(time.time()) + POWEROFF_WAIT_TIME_SECONDS
+            )
+            safe_poweron_timestamp: int = (
+                approximate_poweroff_timestamp + POWEROFF_SAFE_POWERON_BONUS_SECONDS
+            )
+
+            msg_poweroff_ok_approx_timestamp: str = (
+                f"The client (local) is shutting down. Its power supply will be cut <t:{approximate_poweroff_timestamp}:R>."
+                f"\nIt will be safe to power on the local bot <t:{safe_poweron_timestamp}:R>."
+                "\n-# bringing back the power supply before this time will break the power state"
+            )
+            await self.responder.respond(msg_poweroff_ok_approx_timestamp)
         else:
-            logging.info(msg_poweroff_request_unknown)
-            await message.add_line(msg_poweroff_request_unknown)
-            return
+            await message.add_line(msg_poweroff_request_no_only_shutdown)
+            await self.responder.respond(msg_poweroff_ok_only_shutdown)
 
-        # THIS ASSUMES THAT THE SERVER IS USING THE SAME WAIT TIME VALUE CONSTANT!!! (not guaranteed)
-        approximate_poweroff_timestamp: int = (
-            round(time.time()) + POWEROFF_WAIT_TIME_SECONDS
-        )
-        safe_poweron_timestamp: int = (
-            approximate_poweroff_timestamp + POWEROFF_SAFE_POWERON_BONUS_SECONDS
-        )
-
-        msg_approx_poweroff_timestamp: str = (
-            f"The client (local) is shutting down. Its power supply will be cut <t:{approximate_poweroff_timestamp}:R>."
-            f"\nIt will be safe to power on the local bot <t:{safe_poweron_timestamp}:R>."
-            "\n-# bringing back the power supply before this time will break the power state"
-        )
-        await self.responder.respond(msg_approx_poweroff_timestamp)
-
-        logging.info("Shutting down due to bot command os poweroff request.")
+        logging.info(f"Powering off due to a poweroff command. ({self.invocation.only_shutdown=})")
 
         graceful_shutdown_linux()
 
@@ -227,9 +238,9 @@ class CommandCallerPoweroff(CommandCallerBase[CommandInvocationPoweroff]):
         self.networking_handler = networking_handler
 
     def make_invocation(
-        self,
+        self, only_shutdown: bool
     ) -> tuple["CommandCallerPoweroff", CommandInvocationPoweroff]:
-        return (self, CommandInvocationPoweroff())
+        return (self, CommandInvocationPoweroff(only_shutdown=only_shutdown))
 
     def make_call(
         self, invocation: CommandInvocationPoweroff, responder: IResponder
@@ -258,10 +269,18 @@ def setup_cmd_poweroff(
         networking_handler=networking_handler,
     )
 
+    params: list[click.Parameter] = [
+        click.Option(
+            ["-s", "--only_shutdown"],
+            is_flag=True,
+        )
+    ]
+
     command: click.Command = click.Command(
         name=NAME,
         callback=caller.make_invocation,
         add_help_option=False,
+        params=params
     )
 
     simple_setup_cmd(

@@ -1,8 +1,8 @@
 # Fields not required by the selected mode will be ignored, their values will not be used 
 mode='client' # both
 token='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' # both
-bot_prefix='' # both
-bot_status='' # both
+bot_prefix='c!' # both
+bot_status='c!' # both
 default_responder_discord_channel_id='aaaaaaaaaaaaaaaaaaa' # client (for now) # used for system messages e.g. auto poweroff results
 rank_trusted_users='comma,separated,user,ids,with,no,spaces' # both
 rank_owner_users='comma,separated,user,ids,with,no,spaces' # both
